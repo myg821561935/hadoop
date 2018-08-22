@@ -167,7 +167,7 @@ public class YarnConfiguration extends Configuration {
   public static final String DEFAULT_IPC_SERVER_FACTORY_CLASS = 
       "org.apache.hadoop.yarn.factories.impl.pb.RpcServerFactoryPBImpl";
 
-  /** Factory to create serializeable records.*/
+  /** Factory to create serializable records.*/
   public static final String IPC_RECORD_FACTORY_CLASS = 
     IPC_PREFIX + "record.factory.class";
   public static final String DEFAULT_IPC_RECORD_FACTORY_CLASS = 
@@ -1151,7 +1151,7 @@ public class YarnConfiguration extends Configuration {
   public static final String DEFAULT_NM_ADDRESS = "0.0.0.0:"
       + DEFAULT_NM_PORT;
   
-  /** The actual bind address or the NM.*/
+  /** The actual bind address for the NM.*/
   public static final String NM_BIND_HOST =
     NM_PREFIX + "bind-host";
 
@@ -1216,7 +1216,7 @@ public class YarnConfiguration extends Configuration {
       NM_PREFIX + "collector-service.address";
   public static final int DEFAULT_NM_COLLECTOR_SERVICE_PORT = 8048;
   public static final String DEFAULT_NM_COLLECTOR_SERVICE_ADDRESS =
-      "0.0.0.0:" + DEFAULT_NM_LOCALIZER_PORT;
+      "0.0.0.0:" + DEFAULT_NM_COLLECTOR_SERVICE_PORT;
 
   /** Interval in between cache cleanups.*/
   public static final String NM_LOCALIZER_CACHE_CLEANUP_INTERVAL_MS =
@@ -2248,6 +2248,9 @@ public class YarnConfiguration extends Configuration {
   public static final String 
   YARN_SECURITY_SERVICE_AUTHORIZATION_APPLICATIONMASTER_PROTOCOL =
       "security.applicationmaster.protocol.acl";
+  public static final String
+      YARN_SECURITY_SERVICE_AUTHORIZATION_DISTRIBUTEDSCHEDULING_PROTOCOL =
+      "security.distributedscheduling.protocol.acl";
 
   public static final String 
   YARN_SECURITY_SERVICE_AUTHORIZATION_CONTAINER_MANAGEMENT_PROTOCOL =
@@ -2263,6 +2266,10 @@ public class YarnConfiguration extends Configuration {
   public static final String
       YARN_SECURITY_SERVICE_AUTHORIZATION_COLLECTOR_NODEMANAGER_PROTOCOL =
       "security.collector-nodemanager.protocol.acl";
+
+  public static final String
+      YARN_SECURITY_SERVICE_AUTHORIZATION_APPLICATIONMASTER_NODEMANAGER_PROTOCOL =
+      "security.applicationmaster-nodemanager.applicationmaster.protocol.acl";
 
   /** No. of milliseconds to wait between sending a SIGTERM and SIGKILL
    * to a running container */
@@ -3202,8 +3209,14 @@ public class YarnConfiguration extends Configuration {
       "org.apache.hadoop.yarn.server.federation.resolver."
           + "DefaultSubClusterResolverImpl";
 
-  public static final String DEFAULT_FEDERATION_POLICY_KEY = "*";
+  // AMRMProxy split-merge timeout for active sub-clusters. We will not route
+  // new asks to expired sub-clusters.
+  public static final String FEDERATION_AMRMPROXY_SUBCLUSTER_TIMEOUT =
+      FEDERATION_PREFIX + "amrmproxy.subcluster.timeout.ms";
+  public static final long DEFAULT_FEDERATION_AMRMPROXY_SUBCLUSTER_TIMEOUT =
+      60000; // one minute
 
+  public static final String DEFAULT_FEDERATION_POLICY_KEY = "*";
   public static final String FEDERATION_POLICY_MANAGER = FEDERATION_PREFIX
       + "policy-manager";
 

@@ -20,8 +20,10 @@ package org.apache.hadoop.ozone.container.keyvalue;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
+import java.util.Collections;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
+import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.container.common.impl.ContainerData;
 import org.yaml.snakeyaml.nodes.Tag;
 
@@ -33,13 +35,7 @@ import java.util.Map;
 
 import static org.apache.hadoop.ozone.OzoneConsts.CHUNKS_PATH;
 import static org.apache.hadoop.ozone.OzoneConsts.CONTAINER_DB_TYPE;
-import static org.apache.hadoop.ozone.OzoneConsts.CONTAINER_ID;
-import static org.apache.hadoop.ozone.OzoneConsts.CONTAINER_TYPE;
-import static org.apache.hadoop.ozone.OzoneConsts.LAYOUTVERSION;
-import static org.apache.hadoop.ozone.OzoneConsts.MAX_SIZE_GB;
-import static org.apache.hadoop.ozone.OzoneConsts.METADATA;
 import static org.apache.hadoop.ozone.OzoneConsts.METADATA_PATH;
-import static org.apache.hadoop.ozone.OzoneConsts.STATE;
 
 /**
  * This class represents the KeyValueContainer metadata, which is the
@@ -52,17 +48,7 @@ public class KeyValueContainerData extends ContainerData {
   public static final Tag KEYVALUE_YAML_TAG = new Tag("KeyValueContainerData");
 
   // Fields need to be stored in .container file.
-  private static final List<String> YAML_FIELDS =
-      Lists.newArrayList(
-          CONTAINER_TYPE,
-          CONTAINER_ID,
-          LAYOUTVERSION,
-          STATE,
-          METADATA,
-          METADATA_PATH,
-          CHUNKS_PATH,
-          CONTAINER_DB_TYPE,
-          MAX_SIZE_GB);
+  private static final List<String> KV_YAML_FIELDS;
 
   // Path to Container metadata Level DB/RocksDB Store and .container file.
   private String metadataPath;
@@ -73,10 +59,16 @@ public class KeyValueContainerData extends ContainerData {
   //Type of DB used to store key to chunks mapping
   private String containerDBType;
 
-  //Number of pending deletion blocks in container.
-  private int numPendingDeletionBlocks;
-
   private File dbFile = null;
+
+  static {
+    // Initialize YAML fields
+    KV_YAML_FIELDS = Lists.newArrayList();
+    KV_YAML_FIELDS.addAll(YAML_FIELDS);
+    KV_YAML_FIELDS.add(METADATA_PATH);
+    KV_YAML_FIELDS.add(CHUNKS_PATH);
+    KV_YAML_FIELDS.add(CONTAINER_DB_TYPE);
+  }
 
   /**
    * Constructs KeyValueContainerData object.
@@ -85,7 +77,6 @@ public class KeyValueContainerData extends ContainerData {
    */
   public KeyValueContainerData(long id, int size) {
     super(ContainerProtos.ContainerType.KeyValueContainer, id, size);
-    this.numPendingDeletionBlocks = 0;
   }
 
   /**
@@ -97,7 +88,6 @@ public class KeyValueContainerData extends ContainerData {
   public KeyValueContainerData(long id, int layOutVersion, int size) {
     super(ContainerProtos.ContainerType.KeyValueContainer, id, layOutVersion,
         size);
-    this.numPendingDeletionBlocks = 0;
   }
 
 
@@ -120,8 +110,8 @@ public class KeyValueContainerData extends ContainerData {
 
   /**
    * Returns container metadata path.
+   * @return - Physical path where container file and checksum is stored.
    */
-  @Override
   public String getMetadataPath() {
     return metadataPath;
   }
@@ -136,18 +126,21 @@ public class KeyValueContainerData extends ContainerData {
   }
 
   /**
-   * Get chunks path.
-   * @return - Physical path where container file and checksum is stored.
+   * Returns the path to base dir of the container.
+   * @return Path to base dir
    */
-  public String getChunksPath() {
-    return chunksPath;
+  public String getContainerPath() {
+    if (metadataPath == null) {
+      return null;
+    }
+    return new File(metadataPath).getParent();
   }
 
   /**
-   * Returns container chunks path.
+   * Get chunks path.
+   * @return - Path where chunks are stored
    */
-  @Override
-  public String getDataPath() {
+  public String getChunksPath() {
     return chunksPath;
   }
 
@@ -176,33 +169,6 @@ public class KeyValueContainerData extends ContainerData {
   }
 
   /**
-   * Returns the number of pending deletion blocks in container.
-   * @return numPendingDeletionBlocks
-   */
-  public int getNumPendingDeletionBlocks() {
-    return numPendingDeletionBlocks;
-  }
-
-
-  /**
-   * Increase the count of pending deletion blocks.
-   *
-   * @param numBlocks increment number
-   */
-  public void incrPendingDeletionBlocks(int numBlocks) {
-    this.numPendingDeletionBlocks += numBlocks;
-  }
-
-  /**
-   * Decrease the count of pending deletion blocks.
-   *
-   * @param numBlocks decrement number
-   */
-  public void decrPendingDeletionBlocks(int numBlocks) {
-    this.numPendingDeletionBlocks -= numBlocks;
-  }
-
-  /**
    * Returns a ProtoBuf Message from ContainerData.
    *
    * @return Protocol Buffer Message
@@ -211,7 +177,6 @@ public class KeyValueContainerData extends ContainerData {
     ContainerProtos.ContainerData.Builder builder = ContainerProtos
         .ContainerData.newBuilder();
     builder.setContainerID(this.getContainerID());
-    builder.setDbPath(this.getDbFile().getPath());
     builder.setContainerPath(this.getMetadataPath());
     builder.setState(this.getState());
 
@@ -230,15 +195,11 @@ public class KeyValueContainerData extends ContainerData {
       builder.setContainerType(ContainerProtos.ContainerType.KeyValueContainer);
     }
 
-    if(this.getContainerDBType() != null) {
-      builder.setContainerDBType(containerDBType);
-    }
-
     return builder.build();
   }
 
   public static List<String> getYamlFields() {
-    return YAML_FIELDS;
+    return Collections.unmodifiableList(KV_YAML_FIELDS);
   }
 
   /**
@@ -260,7 +221,9 @@ public class KeyValueContainerData extends ContainerData {
     }
 
     if (protoData.hasContainerPath()) {
-      data.setContainerPath(protoData.getContainerPath());
+      String metadataPath = protoData.getContainerPath()+ File.separator +
+          OzoneConsts.CONTAINER_META_PATH;
+      data.setMetadataPath(metadataPath);
     }
 
     if (protoData.hasState()) {
@@ -269,10 +232,6 @@ public class KeyValueContainerData extends ContainerData {
 
     if (protoData.hasBytesUsed()) {
       data.setBytesUsed(protoData.getBytesUsed());
-    }
-
-    if(protoData.hasContainerDBType()) {
-      data.setContainerDBType(protoData.getContainerDBType());
     }
 
     return data;

@@ -32,6 +32,7 @@ import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.hdds.scm.container.common.helpers.StorageContainerException;
 import org.apache.hadoop.ozone.container.ContainerTestHelper;
+import org.apache.hadoop.ozone.container.common.helpers.ContainerUtils;
 import org.apache.hadoop.ozone.container.common.interfaces.Container;
 import org.apache.hadoop.ozone.container.common.interfaces.VolumeChoosingPolicy;
 import org.apache.hadoop.ozone.container.common.volume
@@ -40,8 +41,6 @@ import org.apache.hadoop.ozone.container.common.volume.VolumeSet;
 import org.apache.hadoop.ozone.container.keyvalue.KeyValueContainer;
 import org.apache.hadoop.ozone.container.keyvalue.KeyValueContainerData;
 import org.apache.hadoop.ozone.container.keyvalue.helpers.KeyUtils;
-import org.apache.hadoop.ozone.container.keyvalue.helpers
-    .KeyValueContainerLocationUtil;
 import org.apache.hadoop.ozone.container.keyvalue.impl.ChunkManagerImpl;
 import org.apache.hadoop.ozone.container.keyvalue.impl.KeyManagerImpl;
 import org.apache.hadoop.ozone.container.keyvalue.interfaces.ChunkManager;
@@ -92,6 +91,9 @@ import static org.junit.Assert.fail;
 
 /**
  * Simple tests to verify that container persistence works as expected.
+ * Some of these tests are specific to {@link KeyValueContainer}. If a new
+ * {@link ContainerProtos.ContainerType} is added, the tests need to be
+ * modified.
  */
 public class TestContainerPersistence {
   @Rule
@@ -409,9 +411,10 @@ public class TestContainerPersistence {
       fileHashMap.put(fileName, info);
     }
 
-    ContainerData cNewData = container.getContainerData();
+    KeyValueContainerData cNewData =
+        (KeyValueContainerData) container.getContainerData();
     Assert.assertNotNull(cNewData);
-    Path dataDir = Paths.get(cNewData.getDataPath());
+    Path dataDir = Paths.get(cNewData.getChunksPath());
 
     String globFormat = String.format("%s.data.*", blockID.getLocalID());
     MessageDigest sha = MessageDigest.getInstance(OzoneConsts.FILE_HASH);
@@ -707,11 +710,10 @@ public class TestContainerPersistence {
   @Test
   public void testUpdateContainer() throws IOException {
     long testContainerID = ContainerTestHelper.getTestContainerID();
-    Container container = addContainer(containerSet, testContainerID);
+    KeyValueContainer container =
+        (KeyValueContainer) addContainer(containerSet, testContainerID);
 
-    File orgContainerFile = KeyValueContainerLocationUtil.getContainerFile(
-        new File(container.getContainerData().getMetadataPath()),
-        String.valueOf(testContainerID));
+    File orgContainerFile = container.getContainerFile();
     Assert.assertTrue(orgContainerFile.exists());
 
     Map<String, String> newMetadata = Maps.newHashMap();
@@ -725,7 +727,7 @@ public class TestContainerPersistence {
         .containsKey(testContainerID));
 
     // Verify in-memory map
-    ContainerData actualNewData =
+    KeyValueContainerData actualNewData = (KeyValueContainerData)
         containerSet.getContainer(testContainerID).getContainerData();
     Assert.assertEquals("shire_new",
         actualNewData.getMetadata().get("VOLUME"));
@@ -733,9 +735,9 @@ public class TestContainerPersistence {
         actualNewData.getMetadata().get("owner"));
 
     // Verify container data on disk
-    File newContainerFile = KeyValueContainerLocationUtil.getContainerFile(
-        new File(actualNewData.getMetadataPath()),
-        String.valueOf(testContainerID));
+    File containerBaseDir = new File(actualNewData.getMetadataPath())
+        .getParentFile();
+    File newContainerFile = ContainerUtils.getContainerFile(containerBaseDir);
     Assert.assertTrue("Container file should exist.",
         newContainerFile.exists());
     Assert.assertEquals("Container file should be in same location.",
@@ -766,21 +768,13 @@ public class TestContainerPersistence {
     container.update(newMetadata, true);
 
     // Verify in-memory map
-    actualNewData =
+    actualNewData = (KeyValueContainerData)
         containerSet.getContainer(testContainerID).getContainerData();
     Assert.assertEquals("shire_new_1",
         actualNewData.getMetadata().get("VOLUME"));
     Assert.assertEquals("bilbo_new_1",
         actualNewData.getMetadata().get("owner"));
 
-    // Update a non-existing container
-    exception.expect(StorageContainerException.class);
-    exception.expectMessage("Container is an Inconsistent state, missing " +
-        "required files(.container, .chksm).");
-    Container nonExistentContainer = new KeyValueContainer(
-        new KeyValueContainerData(RandomUtils.nextLong(),
-            ContainerTestHelper.CONTAINER_MAX_SIZE_GB), conf);
-    nonExistentContainer.update(newMetadata, false);
   }
 
   private KeyData writeKeyHelper(BlockID blockID)

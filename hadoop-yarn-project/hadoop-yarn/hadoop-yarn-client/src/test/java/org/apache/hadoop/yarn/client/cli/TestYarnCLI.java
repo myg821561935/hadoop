@@ -292,6 +292,7 @@ public class TestYarnCLI {
     pw.println("\tStart-Time : 1234");
     pw.println("\tFinish-Time : 5678");
     pw.println("\tState : COMPLETE");
+    pw.println("\tExecution-Type : GUARANTEED");
     pw.println("\tLOG-URL : logURL");
     pw.println("\tHost : host:1234");
     pw.println("\tNodeHttpAddress : http://host:2345");
@@ -2160,6 +2161,10 @@ public class TestYarnCLI {
     pw.println("                                          Optionally a destination folder");
     pw.println("                                          for the tarball can be");
     pw.println("                                          specified.");
+    pw.println(" -express <arg>                           Works with -upgrade option to");
+    pw.println("                                          perform express upgrade.  It");
+    pw.println("                                          requires the upgraded");
+    pw.println("                                          application specification file.");
     pw.println(" -finalize                                Works with -upgrade option to");
     pw.println("                                          finalize the upgrade.");
     pw.println(" -flex <Application Name or ID>           Changes number of running");

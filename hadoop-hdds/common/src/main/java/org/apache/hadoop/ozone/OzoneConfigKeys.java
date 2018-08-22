@@ -23,6 +23,7 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
+
 import org.apache.ratis.util.TimeDuration;
 
 /**
@@ -199,11 +200,6 @@ public final class OzoneConfigKeys {
       = "ozone.block.deleting.container.limit.per.interval";
   public static final int
       OZONE_BLOCK_DELETING_CONTAINER_LIMIT_PER_INTERVAL_DEFAULT = 10;
-
-  public static final String OZONE_CONTAINER_REPORT_INTERVAL =
-      "ozone.container.report.interval";
-  public static final String OZONE_CONTAINER_REPORT_INTERVAL_DEFAULT =
-      "60s";
 
   public static final String DFS_CONTAINER_RATIS_ENABLED_KEY
       = ScmConfigKeys.DFS_CONTAINER_RATIS_ENABLED_KEY;

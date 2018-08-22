@@ -88,11 +88,10 @@ public class BlockDeletingService extends BackgroundService{
   // Core pool size for container tasks
   private final static int BLOCK_DELETING_SERVICE_CORE_POOL_SIZE = 10;
 
-  public BlockDeletingService(ContainerSet containerSet,
-      long serviceInterval, long serviceTimeout, Configuration conf) {
-    super("BlockDeletingService", serviceInterval,
-        TimeUnit.MILLISECONDS, BLOCK_DELETING_SERVICE_CORE_POOL_SIZE,
-        serviceTimeout);
+  public BlockDeletingService(ContainerSet containerSet, long serviceInterval,
+      long serviceTimeout, TimeUnit timeUnit, Configuration conf) {
+    super("BlockDeletingService", serviceInterval, timeUnit,
+        BLOCK_DELETING_SERVICE_CORE_POOL_SIZE, serviceTimeout);
     this.containerSet = containerSet;
     containerDeletionPolicy = ReflectionUtils.newInstance(conf.getClass(
         ScmConfigKeys.OZONE_SCM_KEY_VALUE_CONTAINER_DELETION_CHOOSING_POLICY,
@@ -120,9 +119,11 @@ public class BlockDeletingService extends BackgroundService{
       // configured.
       containers = containerSet.chooseContainerForBlockDeletion(
           containerLimitPerInterval, containerDeletionPolicy);
-      LOG.info("Plan to choose {} containers for block deletion, "
-          + "actually returns {} valid containers.",
-          containerLimitPerInterval, containers.size());
+      if (containers.size() > 0) {
+        LOG.info("Plan to choose {} containers for block deletion, "
+                + "actually returns {} valid containers.",
+            containerLimitPerInterval, containers.size());
+      }
 
       for(ContainerData container : containers) {
         BlockDeletingTask containerTask =
@@ -172,11 +173,11 @@ public class BlockDeletingService extends BackgroundService{
       implements BackgroundTask<BackgroundTaskResult> {
 
     private final int priority;
-    private final ContainerData containerData;
+    private final KeyValueContainerData containerData;
 
     BlockDeletingTask(ContainerData containerName, int priority) {
       this.priority = priority;
-      this.containerData = containerName;
+      this.containerData = (KeyValueContainerData) containerName;
     }
 
     @Override
@@ -199,10 +200,10 @@ public class BlockDeletingService extends BackgroundService{
       List<String> succeedBlocks = new LinkedList<>();
       LOG.debug("Container : {}, To-Delete blocks : {}",
           containerData.getContainerID(), toDeleteBlocks.size());
-      File dataDir = new File(containerData.getDataPath());
+      File dataDir = new File(containerData.getChunksPath());
       if (!dataDir.exists() || !dataDir.isDirectory()) {
         LOG.error("Invalid container data dir {} : "
-            + "not exist or not a directory", dataDir.getAbsolutePath());
+            + "does not exist or not a directory", dataDir.getAbsolutePath());
         return crr;
       }
 

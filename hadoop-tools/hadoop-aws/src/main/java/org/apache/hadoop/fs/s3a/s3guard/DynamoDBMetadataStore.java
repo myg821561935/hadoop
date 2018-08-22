@@ -22,18 +22,25 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.URI;
+import java.nio.file.AccessDeniedException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import com.amazonaws.AmazonClientException;
+import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.document.BatchWriteItemOutcome;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
@@ -67,6 +74,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.s3a.AWSCredentialProviderList;
 import org.apache.hadoop.fs.s3a.Constants;
 import org.apache.hadoop.fs.s3a.Invoker;
 import org.apache.hadoop.fs.s3a.Retries;
@@ -75,13 +83,14 @@ import org.apache.hadoop.fs.s3a.S3AInstrumentation;
 import org.apache.hadoop.fs.s3a.S3ARetryPolicy;
 import org.apache.hadoop.fs.s3a.S3AUtils;
 import org.apache.hadoop.fs.s3a.Tristate;
+import org.apache.hadoop.fs.s3a.auth.RolePolicies;
 import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 
 import static org.apache.hadoop.fs.s3a.Constants.*;
-import static org.apache.hadoop.fs.s3a.S3AUtils.translateException;
+import static org.apache.hadoop.fs.s3a.S3AUtils.*;
 import static org.apache.hadoop.fs.s3a.s3guard.PathMetadataDynamoDBTranslation.*;
 import static org.apache.hadoop.fs.s3a.s3guard.S3Guard.*;
 
@@ -207,6 +216,7 @@ public class DynamoDBMetadataStore implements MetadataStore {
       new ValueMap().withBoolean(":false", false);
 
   private DynamoDB dynamoDB;
+  private AWSCredentialProviderList credentials;
   private String region;
   private Table table;
   private String tableName;
@@ -242,10 +252,16 @@ public class DynamoDBMetadataStore implements MetadataStore {
    * A utility function to create DynamoDB instance.
    * @param conf the file system configuration
    * @param s3Region region of the associated S3 bucket (if any).
+   * @param bucket Optional bucket to use to look up per-bucket proxy secrets
+   * @param credentials credentials.
    * @return DynamoDB instance.
    * @throws IOException I/O error.
    */
-  private static DynamoDB createDynamoDB(Configuration conf, String s3Region)
+  private static DynamoDB createDynamoDB(
+      final Configuration conf,
+      final String s3Region,
+      final String bucket,
+      final AWSCredentialsProvider credentials)
       throws IOException {
     Preconditions.checkNotNull(conf);
     final Class<? extends DynamoDBClientFactory> cls = conf.getClass(
@@ -254,10 +270,18 @@ public class DynamoDBMetadataStore implements MetadataStore {
         DynamoDBClientFactory.class);
     LOG.debug("Creating DynamoDB client {} with S3 region {}", cls, s3Region);
     final AmazonDynamoDB dynamoDBClient = ReflectionUtils.newInstance(cls, conf)
-        .createDynamoDBClient(s3Region);
+        .createDynamoDBClient(s3Region, bucket, credentials);
     return new DynamoDB(dynamoDBClient);
   }
 
+  /**
+   * {@inheritDoc}.
+   * The credentials for authenticating with S3 are requested from the
+   * FS via {@link S3AFileSystem#shareCredentials(String)}; this will
+   * increment the reference counter of these credentials.
+   * @param fs {@code S3AFileSystem} associated with the MetadataStore
+   * @throws IOException on a failure
+   */
   @Override
   @Retries.OnceRaw
   public void initialize(FileSystem fs) throws IOException {
@@ -274,11 +298,23 @@ public class DynamoDBMetadataStore implements MetadataStore {
       LOG.debug("Overriding S3 region with configured DynamoDB region: {}",
           region);
     } else {
-      region = owner.getBucketLocation();
+      try {
+        region = owner.getBucketLocation();
+      } catch (AccessDeniedException e) {
+        // access denied here == can't call getBucket. Report meaningfully
+        URI uri = owner.getUri();
+        LOG.error("Failed to get bucket location from S3 bucket {}",
+            uri);
+        throw (IOException)new AccessDeniedException(
+            "S3 client role lacks permission "
+                + RolePolicies.S3_GET_BUCKET_LOCATION + " for " + uri)
+            .initCause(e);
+      }
       LOG.debug("Inferring DynamoDB region from S3 bucket: {}", region);
     }
     username = owner.getUsername();
-    dynamoDB = createDynamoDB(conf, region);
+    credentials = owner.shareCredentials("s3guard");
+    dynamoDB = createDynamoDB(conf, region, bucket, credentials);
 
     // use the bucket as the DynamoDB table name if not specified in config
     tableName = conf.getTrimmed(S3GUARD_DDB_TABLE_NAME_KEY, bucket);
@@ -311,6 +347,9 @@ public class DynamoDBMetadataStore implements MetadataStore {
    * must declare the table name and region in the
    * {@link Constants#S3GUARD_DDB_TABLE_NAME_KEY} and
    * {@link Constants#S3GUARD_DDB_REGION_KEY} respectively.
+   * It also creates a new credential provider list from the configuration,
+   * using the base fs.s3a.* options, as there is no bucket to infer per-bucket
+   * settings from.
    *
    * @see #initialize(FileSystem)
    * @throws IOException if there is an error
@@ -327,7 +366,8 @@ public class DynamoDBMetadataStore implements MetadataStore {
     region = conf.getTrimmed(S3GUARD_DDB_REGION_KEY);
     Preconditions.checkArgument(!StringUtils.isEmpty(region),
         "No DynamoDB region configured");
-    dynamoDB = createDynamoDB(conf, region);
+    credentials = createAWSCredentialProviderSet(null, conf);
+    dynamoDB = createDynamoDB(conf, region, null, credentials);
 
     username = UserGroupInformation.getCurrentUser().getShortUserName();
     initDataAccessRetries(conf);
@@ -387,7 +427,7 @@ public class DynamoDBMetadataStore implements MetadataStore {
     boolean idempotent = S3AFileSystem.DELETE_CONSIDERED_IDEMPOTENT;
     if (tombstone) {
       Item item = PathMetadataDynamoDBTranslation.pathMetadataToItem(
-          PathMetadata.tombstone(path));
+          new DDBPathMetadata(PathMetadata.tombstone(path)));
       invoker.retry("Put tombstone", path.toString(), idempotent,
           () -> table.putItem(item));
     } else {
@@ -426,13 +466,13 @@ public class DynamoDBMetadataStore implements MetadataStore {
 
   @Override
   @Retries.OnceTranslated
-  public PathMetadata get(Path path) throws IOException {
+  public DDBPathMetadata get(Path path) throws IOException {
     return get(path, false);
   }
 
   @Override
   @Retries.OnceTranslated
-  public PathMetadata get(Path path, boolean wantEmptyDirectoryFlag)
+  public DDBPathMetadata get(Path path, boolean wantEmptyDirectoryFlag)
       throws IOException {
     checkPath(path);
     LOG.debug("Get from table {} in region {}: {}", tableName, region, path);
@@ -450,12 +490,13 @@ public class DynamoDBMetadataStore implements MetadataStore {
    * @throws AmazonClientException dynamo DB level problem
    */
   @Retries.OnceRaw
-  private PathMetadata innerGet(Path path, boolean wantEmptyDirectoryFlag)
+  private DDBPathMetadata innerGet(Path path, boolean wantEmptyDirectoryFlag)
       throws IOException {
-    final PathMetadata meta;
+    final DDBPathMetadata meta;
     if (path.isRoot()) {
       // Root does not persist in the table
-      meta = new PathMetadata(makeDirStatus(username, path));
+      meta =
+          new DDBPathMetadata(makeDirStatus(username, path));
     } else {
       final Item item = getConsistentItem(pathToKey(path));
       meta = itemToPathMetadata(item, username);
@@ -515,15 +556,22 @@ public class DynamoDBMetadataStore implements MetadataStore {
 
           final List<PathMetadata> metas = new ArrayList<>();
           for (Item item : items) {
-            PathMetadata meta = itemToPathMetadata(item, username);
+            DDBPathMetadata meta = itemToPathMetadata(item, username);
             metas.add(meta);
           }
+
+          DDBPathMetadata dirPathMeta = get(path);
+          boolean isAuthoritative = false;
+          if(dirPathMeta != null) {
+            isAuthoritative = dirPathMeta.isAuthoritativeDir();
+          }
+
           LOG.trace("Listing table {} in region {} for {} returning {}",
               tableName, region, path, metas);
 
-          return (metas.isEmpty() && get(path) == null)
+          return (metas.isEmpty() && dirPathMeta == null)
               ? null
-              : new DirListingMetadata(path, metas, false);
+              : new DirListingMetadata(path, metas, isAuthoritative);
         });
   }
 
@@ -532,24 +580,25 @@ public class DynamoDBMetadataStore implements MetadataStore {
    * @param pathsToCreate paths to create
    * @return the full ancestry paths
    */
-  Collection<PathMetadata> completeAncestry(
-      Collection<PathMetadata> pathsToCreate) {
+  Collection<DDBPathMetadata> completeAncestry(
+      Collection<DDBPathMetadata> pathsToCreate) {
     // Key on path to allow fast lookup
-    Map<Path, PathMetadata> ancestry = new HashMap<>();
+    Map<Path, DDBPathMetadata> ancestry = new HashMap<>();
 
-    for (PathMetadata meta : pathsToCreate) {
+    for (DDBPathMetadata meta : pathsToCreate) {
       Preconditions.checkArgument(meta != null);
       Path path = meta.getFileStatus().getPath();
       if (path.isRoot()) {
         break;
       }
-      ancestry.put(path, meta);
+      ancestry.put(path, new DDBPathMetadata(meta));
       Path parent = path.getParent();
       while (!parent.isRoot() && !ancestry.containsKey(parent)) {
         LOG.debug("auto-create ancestor path {} for child path {}",
             parent, path);
         final FileStatus status = makeDirStatus(parent, username);
-        ancestry.put(parent, new PathMetadata(status, Tristate.FALSE, false));
+        ancestry.put(parent, new DDBPathMetadata(status, Tristate.FALSE,
+            false));
         parent = parent.getParent();
       }
     }
@@ -576,13 +625,13 @@ public class DynamoDBMetadataStore implements MetadataStore {
     // Following code is to maintain this invariant by putting all ancestor
     // directories of the paths to create.
     // ancestor paths that are not explicitly added to paths to create
-    Collection<PathMetadata> newItems = new ArrayList<>();
+    Collection<DDBPathMetadata> newItems = new ArrayList<>();
     if (pathsToCreate != null) {
-      newItems.addAll(completeAncestry(pathsToCreate));
+      newItems.addAll(completeAncestry(pathMetaToDDBPathMeta(pathsToCreate)));
     }
     if (pathsToDelete != null) {
       for (Path meta : pathsToDelete) {
-        newItems.add(PathMetadata.tombstone(meta));
+        newItems.add(new DDBPathMetadata(PathMetadata.tombstone(meta)));
       }
     }
 
@@ -690,7 +739,11 @@ public class DynamoDBMetadataStore implements MetadataStore {
   @Override
   @Retries.OnceRaw
   public void put(Collection<PathMetadata> metas) throws IOException {
+    innerPut(pathMetaToDDBPathMeta(metas));
+  }
 
+  @Retries.OnceRaw
+  private void innerPut(Collection<DDBPathMetadata> metas) throws IOException {
     Item[] items = pathMetadataToItem(completeAncestry(metas));
     LOG.debug("Saving batch of {} items to table {}, region {}", items.length,
         tableName, region);
@@ -701,10 +754,10 @@ public class DynamoDBMetadataStore implements MetadataStore {
    * Helper method to get full path of ancestors that are nonexistent in table.
    */
   @Retries.OnceRaw
-  private Collection<PathMetadata> fullPathsToPut(PathMetadata meta)
+  private Collection<DDBPathMetadata> fullPathsToPut(DDBPathMetadata meta)
       throws IOException {
     checkPathMetadata(meta);
-    final Collection<PathMetadata> metasToPut = new ArrayList<>();
+    final Collection<DDBPathMetadata> metasToPut = new ArrayList<>();
     // root path is not persisted
     if (!meta.getFileStatus().getPath().isRoot()) {
       metasToPut.add(meta);
@@ -717,7 +770,8 @@ public class DynamoDBMetadataStore implements MetadataStore {
       final Item item = getConsistentItem(pathToKey(path));
       if (!itemExists(item)) {
         final FileStatus status = makeDirStatus(path, username);
-        metasToPut.add(new PathMetadata(status, Tristate.FALSE, false));
+        metasToPut.add(new DDBPathMetadata(status, Tristate.FALSE, false,
+            meta.isAuthoritativeDir()));
         path = path.getParent();
       } else {
         break;
@@ -758,16 +812,17 @@ public class DynamoDBMetadataStore implements MetadataStore {
 
     // directory path
     Path path = meta.getPath();
-    PathMetadata p = new PathMetadata(makeDirStatus(path, username),
-        meta.isEmpty(), false);
+    DDBPathMetadata ddbPathMeta =
+        new DDBPathMetadata(makeDirStatus(path, username), meta.isEmpty(),
+            false, meta.isAuthoritative());
 
     // First add any missing ancestors...
-    final Collection<PathMetadata> metasToPut = invoker.retry(
+    final Collection<DDBPathMetadata> metasToPut = invoker.retry(
         "paths to put", path.toString(), true,
-        () -> fullPathsToPut(p));
+        () -> fullPathsToPut(ddbPathMeta));
 
     // next add all children of the directory
-    metasToPut.addAll(meta.getListing());
+    metasToPut.addAll(pathMetaToDDBPathMeta(meta.getListing()));
 
     Invoker.once("put", path.toString(),
         () -> processBatchWriteRequest(null, pathMetadataToItem(metasToPut)));
@@ -778,12 +833,17 @@ public class DynamoDBMetadataStore implements MetadataStore {
     if (instrumentation != null) {
       instrumentation.storeClosed();
     }
-    if (dynamoDB != null) {
-      LOG.debug("Shutting down {}", this);
-      dynamoDB.shutdown();
-      dynamoDB = null;
+    try {
+      if (dynamoDB != null) {
+        LOG.debug("Shutting down {}", this);
+        dynamoDB.shutdown();
+        dynamoDB = null;
+      }
+    } finally {
+      closeAutocloseables(LOG, credentials);
+      credentials = null;
     }
-  }
+}
 
   @Override
   @Retries.OnceTranslated
@@ -840,21 +900,38 @@ public class DynamoDBMetadataStore implements MetadataStore {
           new ArrayList<>(S3GUARD_DDB_BATCH_WRITE_REQUEST_LIMIT);
       int delay = conf.getInt(S3GUARD_DDB_BACKGROUND_SLEEP_MSEC_KEY,
           S3GUARD_DDB_BACKGROUND_SLEEP_MSEC_DEFAULT);
+      Set<Path> parentPathSet =  new HashSet<>();
       for (Item item : expiredFiles(modTime, keyPrefix)) {
-        PathMetadata md = PathMetadataDynamoDBTranslation
+        DDBPathMetadata md = PathMetadataDynamoDBTranslation
             .itemToPathMetadata(item, username);
         Path path = md.getFileStatus().getPath();
         deletionBatch.add(path);
+
+        // add parent path of what we remove
+        Path parentPath = path.getParent();
+        if (parentPath != null) {
+          parentPathSet.add(parentPath);
+        }
+
         itemCount++;
         if (deletionBatch.size() == S3GUARD_DDB_BATCH_WRITE_REQUEST_LIMIT) {
           Thread.sleep(delay);
           processBatchWriteRequest(pathToKey(deletionBatch), null);
+
+          // set authoritative false for each pruned dir listing
+          removeAuthoritativeDirFlag(parentPathSet);
+          parentPathSet.clear();
+
           deletionBatch.clear();
         }
       }
       if (deletionBatch.size() > 0) {
         Thread.sleep(delay);
         processBatchWriteRequest(pathToKey(deletionBatch), null);
+
+        // set authoritative false for each pruned dir listing
+        removeAuthoritativeDirFlag(parentPathSet);
+        parentPathSet.clear();
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
@@ -862,6 +939,43 @@ public class DynamoDBMetadataStore implements MetadataStore {
     }
     LOG.info("Finished pruning {} items in batches of {}", itemCount,
         S3GUARD_DDB_BATCH_WRITE_REQUEST_LIMIT);
+  }
+
+  private void removeAuthoritativeDirFlag(Set<Path> pathSet)
+      throws IOException {
+    AtomicReference<IOException> rIOException = new AtomicReference<>();
+
+    Set<DDBPathMetadata> metas = pathSet.stream().map(path -> {
+      try {
+        DDBPathMetadata ddbPathMetadata = get(path);
+        if(ddbPathMetadata == null) {
+          return null;
+        }
+        LOG.debug("Setting false isAuthoritativeDir on {}", ddbPathMetadata);
+        ddbPathMetadata.setAuthoritativeDir(false);
+        return ddbPathMetadata;
+      } catch (IOException e) {
+        String msg = String.format("IOException while getting PathMetadata "
+            + "on path: %s.", path);
+        LOG.error(msg, e);
+        rIOException.set(e);
+        return null;
+      }
+    }).filter(Objects::nonNull).collect(Collectors.toSet());
+
+    try {
+      LOG.debug("innerPut on metas: {}", metas);
+      innerPut(metas);
+    } catch (IOException e) {
+      String msg = String.format("IOException while setting false "
+          + "authoritative directory flag on: %s.", metas);
+      LOG.error(msg, e);
+      rIOException.set(e);
+    }
+
+    if (rIOException.get() != null) {
+      throw rIOException.get();
+    }
   }
 
   @Override
@@ -1157,7 +1271,7 @@ public class DynamoDBMetadataStore implements MetadataStore {
       map.put(WRITE_CAPACITY, throughput.getWriteCapacityUnits().toString());
       map.put(TABLE, desc.toString());
       map.put(MetadataStoreCapabilities.PERSISTS_AUTHORITATIVE_BIT,
-          Boolean.toString(false));
+          Boolean.toString(true));
     } else {
       map.put("name", "DynamoDB Metadata Store");
       map.put(TABLE, "none");

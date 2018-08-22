@@ -33,6 +33,7 @@ import org.apache.hadoop.http.HttpServer2;
 import org.apache.hadoop.metrics2.MetricsSystem;
 import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.metrics2.source.JvmMetrics;
+import org.apache.hadoop.metrics2.util.MBeans;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -95,11 +96,13 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeEventType;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerNode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.constraint.AllocationTagsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.constraint.MemoryPlacementConstraintManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.constraint.PlacementConstraintManagerService;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.SchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.SchedulerEventType;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.placement.MultiNodeSortingManager;
 import org.apache.hadoop.yarn.server.resourcemanager.security.DelegationTokenRenewer;
 import org.apache.hadoop.yarn.server.resourcemanager.security.QueueACLsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.timelineservice.RMTimelineCollectorManager;
@@ -140,7 +143,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  */
 @SuppressWarnings("unchecked")
-public class ResourceManager extends CompositeService implements Recoverable {
+public class ResourceManager extends CompositeService
+        implements Recoverable, ResourceManagerMXBean {
 
   /**
    * Priority of the ResourceManager shutdown hook.
@@ -220,6 +224,10 @@ public class ResourceManager extends CompositeService implements Recoverable {
 
   public static long getClusterTimeStamp() {
     return clusterTimeStamp;
+  }
+
+  public String getRMLoginUser() {
+    return rmLoginUGI.getShortUserName();
   }
 
   @VisibleForTesting
@@ -332,6 +340,8 @@ public class ResourceManager extends CompositeService implements Recoverable {
         createSystemMetricsPublisher();
     addIfService(systemMetricsPublisher);
     rmContext.setSystemMetricsPublisher(systemMetricsPublisher);
+
+    registerMXBean();
 
     super.serviceInit(this.conf);
   }
@@ -538,6 +548,10 @@ public class ResourceManager extends CompositeService implements Recoverable {
     return new FederationStateStoreService(rmContext);
   }
 
+  protected MultiNodeSortingManager<SchedulerNode> createMultiNodeSortingManager() {
+    return new MultiNodeSortingManager<SchedulerNode>();
+  }
+
   protected SystemMetricsPublisher createSystemMetricsPublisher() {
     List<SystemMetricsPublisher> publishers =
         new ArrayList<SystemMetricsPublisher>();
@@ -657,6 +671,12 @@ public class ResourceManager extends CompositeService implements Recoverable {
       resourceProfilesManager.init(conf);
       rmContext.setResourceProfilesManager(resourceProfilesManager);
 
+      MultiNodeSortingManager<SchedulerNode> multiNodeSortingManager =
+          createMultiNodeSortingManager();
+      multiNodeSortingManager.setRMContext(rmContext);
+      addService(multiNodeSortingManager);
+      rmContext.setMultiNodeSortingManager(multiNodeSortingManager);
+
       RMDelegatedNodeLabelsUpdater delegatedNodeLabelsUpdater =
           createRMDelegatedNodeLabelsUpdater();
       if (delegatedNodeLabelsUpdater != null) {
@@ -757,8 +777,10 @@ public class ResourceManager extends CompositeService implements Recoverable {
       }
 
       masterService = createApplicationMasterService();
+      createAndRegisterOpportunisticDispatcher(masterService);
       addService(masterService) ;
       rmContext.setApplicationMasterService(masterService);
+
 
       applicationACLsManager = new ApplicationACLsManager(conf);
 
@@ -805,6 +827,23 @@ public class ResourceManager extends CompositeService implements Recoverable {
       }
 
       super.serviceInit(conf);
+    }
+
+    private void createAndRegisterOpportunisticDispatcher(
+        ApplicationMasterService service) {
+      if (!isOpportunisticSchedulingEnabled(conf)) {
+        return;
+      }
+      EventDispatcher oppContainerAllocEventDispatcher = new EventDispatcher(
+          (OpportunisticContainerAllocatorAMService) service,
+          OpportunisticContainerAllocatorAMService.class.getName());
+      // Add an event dispatcher for the
+      // OpportunisticContainerAllocatorAMService to handle node
+      // additions, updates and removals. Since the SchedulerEvent is currently
+      // a super set of theses, we register interest for it.
+      addService(oppContainerAllocEventDispatcher);
+      rmDispatcher
+          .register(SchedulerEventType.class, oppContainerAllocEventDispatcher);
     }
 
     @Override
@@ -1335,8 +1374,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
 
   protected ApplicationMasterService createApplicationMasterService() {
     Configuration config = this.rmContext.getYarnConfiguration();
-    if (YarnConfiguration.isOpportunisticContainerAllocationEnabled(config)
-        || YarnConfiguration.isDistSchedulingEnabled(config)) {
+    if (isOpportunisticSchedulingEnabled(conf)) {
       if (YarnConfiguration.isDistSchedulingEnabled(config) &&
           !YarnConfiguration
               .isOpportunisticContainerAllocationEnabled(config)) {
@@ -1348,16 +1386,6 @@ public class ResourceManager extends CompositeService implements Recoverable {
           oppContainerAllocatingAMService =
           new OpportunisticContainerAllocatorAMService(this.rmContext,
               scheduler);
-      EventDispatcher oppContainerAllocEventDispatcher =
-          new EventDispatcher(oppContainerAllocatingAMService,
-              OpportunisticContainerAllocatorAMService.class.getName());
-      // Add an event dispatcher for the
-      // OpportunisticContainerAllocatorAMService to handle node
-      // additions, updates and removals. Since the SchedulerEvent is currently
-      // a super set of theses, we register interest for it.
-      addService(oppContainerAllocEventDispatcher);
-      rmDispatcher.register(SchedulerEventType.class,
-          oppContainerAllocEventDispatcher);
       this.rmContext.setContainerQueueLimitCalculator(
           oppContainerAllocatingAMService.getNodeManagerQueueLimitCalculator());
       return oppContainerAllocatingAMService;
@@ -1371,6 +1399,11 @@ public class ResourceManager extends CompositeService implements Recoverable {
 
   protected RMSecretManagerService createRMSecretManagerService() {
     return new RMSecretManagerService(conf, rmContext);
+  }
+
+  private boolean isOpportunisticSchedulingEnabled(Configuration conf) {
+    return YarnConfiguration.isOpportunisticContainerAllocationEnabled(conf)
+        || YarnConfiguration.isDistSchedulingEnabled(conf);
   }
 
   /**
@@ -1582,5 +1615,17 @@ public class ResourceManager extends CompositeService implements Recoverable {
 
   protected RMAppLifetimeMonitor createRMAppLifetimeMonitor() {
     return new RMAppLifetimeMonitor(this.rmContext);
+  }
+
+  /**
+   * Register ResourceManagerMXBean.
+   */
+  private void registerMXBean() {
+    MBeans.register("ResourceManager", "ResourceManager", this);
+  }
+
+  @Override
+  public boolean isSecurityEnabled() {
+    return UserGroupInformation.isSecurityEnabled();
   }
 }

@@ -75,6 +75,17 @@
     </description>
   </property>
   <property>
+    <name>hdds.datanode.volume.choosing.policy</name>
+    <value/>
+    <tag>OZONE, CONTAINER, STORAGE, MANAGEMENT</tag>
+    <description>
+      The class name of the policy for choosing volumes in the list of
+      directories.  Defaults to
+      org.apache.hadoop.ozone.container.common.volume.RoundRobinVolumeChoosingPolicy.
+      This volume choosing policy selects volumes in a round-robin order.
+    </description>
+  </property>
+  <property>
     <name>dfs.container.ratis.enabled</name>
     <value>false</value>
     <tag>OZONE, MANAGEMENT, PIPELINE, RATIS</tag>
@@ -153,13 +164,29 @@
     <description>The timeout duration for ratis server request.</description>
   </property>
   <property>
-    <name>ozone.container.report.interval</name>
+    <name>hdds.node.report.interval</name>
+    <value>60000ms</value>
+    <tag>OZONE, CONTAINER, MANAGEMENT</tag>
+    <description>Time interval of the datanode to send node report. Each
+      datanode periodically send node report to SCM. Unit could be
+      defined with postfix (ns,ms,s,m,h,d)</description>
+  </property>
+  <property>
+    <name>hdds.container.report.interval</name>
     <value>60000ms</value>
     <tag>OZONE, CONTAINER, MANAGEMENT</tag>
     <description>Time interval of the datanode to send container report. Each
-      datanode periodically send container report upon receive
-      sendContainerReport from SCM. Unit could be defined with
-      postfix (ns,ms,s,m,h,d)</description>
+      datanode periodically send container report to SCM. Unit could be
+      defined with postfix (ns,ms,s,m,h,d)</description>
+  </property>
+  <property>
+    <name>hdds.command.status.report.interval</name>
+    <value>60000ms</value>
+    <tag>OZONE, CONTAINER, MANAGEMENT</tag>
+    <description>Time interval of the datanode to send status of command
+      execution. Each datanode periodically the execution status of commands
+      received from SCM to SCM. Unit could be defined with postfix
+      (ns,ms,s,m,h,d)</description>
   </property>
   <!--Ozone Settings-->
   <property>
@@ -677,7 +704,7 @@
     </description>
   </property>
   <property>
-    <name>ozone.scm.heartbeat.interval</name>
+    <name>hdds.heartbeat.interval</name>
     <value>30s</value>
     <tag>OZONE, MANAGEMENT</tag>
     <description>
@@ -788,7 +815,7 @@
   <property>
     <name>ozone.scm.names</name>
     <value/>
-    <tag>OZONE</tag>
+    <tag>OZONE, REQUIRED</tag>
     <description>
       The value of this property is a set of DNS | DNS:PORT | IP
       Address | IP:PORT. Written as a comma separated string. e.g. scm1,
@@ -1069,5 +1096,37 @@
       executed since last report. Unit could be defined with
       postfix (ns,ms,s,m,h,d)</description>
   </property>
+  <property>
+    <name>ozone.scm.pipeline.creation.lease.timeout</name>
+    <value>60s</value>
+    <tag>OZONE, SCM, PIPELINE</tag>
+    <description>
+      Pipeline creation timeout in milliseconds to be used by SCM. When
+      BEGIN_CREATE event happens the pipeline is moved from ALLOCATED to
+      CREATING state, SCM will now wait for the configured amount of time
+      to get COMPLETE_CREATE event if it doesn't receive it will move the
+      pipeline to DELETING.
+    </description>
+  </property>
 
+  <property>
+    <name>hdds.container.action.max.limit</name>
+    <value>20</value>
+    <tag>DATANODE</tag>
+    <description>
+      Maximum number of Container Actions sent by the datanode to SCM in a
+      single heartbeat.
+    </description>
+  </property>
+
+  <property>
+    <name>hdds.scm.watcher.timeout</name>
+    <value>10m</value>
+    <tag>OZONE, SCM, MANAGEMENT</tag>
+    <description>
+      Timeout for the watchers of the HDDS SCM CommandWatchers. After this
+      duration the Copy/Delete container commands will be sent again to the
+      datanode unless the datanode confirms the completion.
+    </description>
+  </property>
 </configuration>

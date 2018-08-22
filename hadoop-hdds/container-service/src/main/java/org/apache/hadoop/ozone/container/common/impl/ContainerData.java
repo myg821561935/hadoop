@@ -18,27 +18,39 @@
 package org.apache.hadoop.ozone.container.common.impl;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.util.List;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.
     ContainerType;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.
     ContainerLifeCycleState;
+import org.apache.hadoop.ozone.container.common.helpers.ContainerUtils;
 import org.apache.hadoop.ozone.container.common.volume.HddsVolume;
 
-import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import org.yaml.snakeyaml.Yaml;
 
 import static java.lang.Math.max;
+import static org.apache.hadoop.ozone.OzoneConsts.CHECKSUM;
+import static org.apache.hadoop.ozone.OzoneConsts.CONTAINER_ID;
+import static org.apache.hadoop.ozone.OzoneConsts.CONTAINER_TYPE;
+import static org.apache.hadoop.ozone.OzoneConsts.LAYOUTVERSION;
+import static org.apache.hadoop.ozone.OzoneConsts.MAX_SIZE_GB;
+import static org.apache.hadoop.ozone.OzoneConsts.METADATA;
+import static org.apache.hadoop.ozone.OzoneConsts.STATE;
 
 /**
  * ContainerData is the in-memory representation of container metadata and is
  * represented on disk by the .container file.
  */
-public class ContainerData {
+public abstract class ContainerData {
 
   //Type of the container.
   // For now, we support only KeyValueContainer.
@@ -46,9 +58,6 @@ public class ContainerData {
 
   // Unique identifier for the container
   private final long containerID;
-
-  // Path to container root dir.
-  private String containerPath;
 
   // Layout version of the container data
   private final int layOutVersion;
@@ -74,6 +83,23 @@ public class ContainerData {
 
   private long deleteTransactionId;
 
+  private String checksum;
+  public static final Charset CHARSET_ENCODING = Charset.forName("UTF-8");
+  private static final String DUMMY_CHECKSUM = new String(new byte[64],
+      CHARSET_ENCODING);
+
+  // Common Fields need to be stored in .container file.
+  protected static final List<String> YAML_FIELDS =
+      Collections.unmodifiableList(Lists.newArrayList(
+      CONTAINER_TYPE,
+      CONTAINER_ID,
+      LAYOUTVERSION,
+      STATE,
+      METADATA,
+      MAX_SIZE_GB,
+      CHECKSUM));
+
+
   /**
    * Number of pending deletion blocks in container.
    */
@@ -85,7 +111,7 @@ public class ContainerData {
    * @param containerId - ContainerId
    * @param size - container maximum size
    */
-  public ContainerData(ContainerType type, long containerId, int size) {
+  protected ContainerData(ContainerType type, long containerId, int size) {
     this(type, containerId,
         ChunkLayOutVersion.getLatestVersion().getVersion(), size);
   }
@@ -97,7 +123,7 @@ public class ContainerData {
    * @param layOutVersion - Container layOutVersion
    * @param size - Container maximum size
    */
-  public ContainerData(ContainerType type, long containerId,
+  protected ContainerData(ContainerType type, long containerId,
     int layOutVersion, int size) {
     Preconditions.checkNotNull(type);
 
@@ -115,6 +141,7 @@ public class ContainerData {
     this.maxSizeGB = size;
     this.numPendingDeletionBlocks = new AtomicInteger(0);
     this.deleteTransactionId = 0;
+    setChecksumTo0ByteArray();
   }
 
   /**
@@ -128,17 +155,7 @@ public class ContainerData {
    * Returns the path to base dir of the container.
    * @return Path to base dir.
    */
-  public String getContainerPath() {
-    return containerPath;
-  }
-
-  /**
-   * Set the base dir path of the container.
-   * @param baseDir path to base dir
-   */
-  public void setContainerPath(String baseDir) {
-    this.containerPath = baseDir;
-  }
+  public abstract String getContainerPath();
 
   /**
    * Returns the type of the container.
@@ -240,7 +257,6 @@ public class ContainerData {
    * Marks this container as closed.
    */
   public synchronized void closeContainer() {
-    // TODO: closed or closing here
     setState(ContainerLifeCycleState.CLOSED);
   }
 
@@ -388,20 +404,6 @@ public class ContainerData {
   }
 
   /**
-   * Returns container metadata path.
-   */
-  public String getMetadataPath() {
-    return null;
-  }
-
-  /**
-   * Returns container data path.
-   */
-  public String getDataPath() {
-    return null;
-  }
-
-  /**
    * Increase the count of pending deletion blocks.
    *
    * @param numBlocks increment number
@@ -426,38 +428,47 @@ public class ContainerData {
     return this.numPendingDeletionBlocks.get();
   }
 
+  public void setChecksumTo0ByteArray() {
+    this.checksum = DUMMY_CHECKSUM;
+  }
+
+  public void setChecksum(String checkSum) {
+    this.checksum = checkSum;
+  }
+
+  public String getChecksum() {
+    return this.checksum;
+  }
+
+  /**
+   * Compute the checksum for ContainerData using the specified Yaml (based
+   * on ContainerType) and set the checksum.
+   *
+   * Checksum of ContainerData is calculated by setting the
+   * {@link ContainerData#checksum} field to a 64-byte array with all 0's -
+   * {@link ContainerData#DUMMY_CHECKSUM}. After the checksum is calculated,
+   * the checksum field is updated with this value.
+   *
+   * @param yaml Yaml for ContainerType to get the ContainerData as Yaml String
+   * @throws IOException
+   */
+  public void computeAndSetChecksum(Yaml yaml) throws IOException {
+    // Set checksum to dummy value - 0 byte array, to calculate the checksum
+    // of rest of the data.
+    setChecksumTo0ByteArray();
+
+    // Dump yaml data into a string to compute its checksum
+    String containerDataYamlStr = yaml.dump(this);
+
+    this.checksum = ContainerUtils.getChecksum(containerDataYamlStr);
+  }
+
   /**
    * Returns a ProtoBuf Message from ContainerData.
    *
    * @return Protocol Buffer Message
    */
-  public ContainerProtos.ContainerData getProtoBufMessage() {
-    ContainerProtos.ContainerData.Builder builder =
-        ContainerProtos.ContainerData.newBuilder();
-
-    builder.setContainerID(this.getContainerID());
-
-    if (this.containerPath != null) {
-      builder.setContainerPath(this.containerPath);
-    }
-
-    builder.setState(this.getState());
-
-    for (Map.Entry<String, String> entry : metadata.entrySet()) {
-      ContainerProtos.KeyValue.Builder keyValBuilder =
-          ContainerProtos.KeyValue.newBuilder();
-      builder.addMetadata(keyValBuilder.setKey(entry.getKey())
-          .setValue(entry.getValue()).build());
-    }
-
-    if (this.getBytesUsed() >= 0) {
-      builder.setBytesUsed(this.getBytesUsed());
-    }
-
-    builder.setContainerType(containerType);
-
-    return builder.build();
-  }
+  public abstract ContainerProtos.ContainerData getProtoBufMessage();
 
   /**
    * Sets deleteTransactionId to latest delete transactionId for the container.

@@ -26,6 +26,8 @@ import org.apache.hadoop.hdds.scm.container.common.helpers
     .ContainerWithPipeline;
 import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
 import org.apache.hadoop.hdds.scm.container.states.ContainerStateMap;
+import org.apache.hadoop.hdds.scm.exceptions.SCMException;
+import org.apache.hadoop.hdds.scm.pipelines.PipelineSelector;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.apache.hadoop.ozone.MiniOzoneCluster;
 import org.junit.AfterClass;
@@ -51,6 +53,7 @@ public class TestNode2PipelineMap {
   private static ContainerWithPipeline ratisContainer;
   private static ContainerStateMap stateMap;
   private static ContainerMapping mapping;
+  private static PipelineSelector pipelineSelector;
 
   /**
    * Create a MiniDFSCluster for testing.
@@ -66,6 +69,7 @@ public class TestNode2PipelineMap {
     mapping = (ContainerMapping)scm.getScmContainerManager();
     stateMap = mapping.getStateManager().getContainerStateMap();
     ratisContainer = mapping.allocateContainer(RATIS, THREE, "testOwner");
+    pipelineSelector = mapping.getPipelineSelector();
   }
 
   /**
@@ -83,7 +87,7 @@ public class TestNode2PipelineMap {
   public void testPipelineMap() throws IOException {
 
     NavigableSet<ContainerID> set = stateMap.getOpenContainerIDsByPipeline(
-        ratisContainer.getPipeline().getPipelineName());
+        ratisContainer.getPipeline().getId());
 
     long cId = ratisContainer.getContainerInfo().getContainerID();
     Assert.assertEquals(1, set.size());
@@ -96,8 +100,8 @@ public class TestNode2PipelineMap {
     Set<Pipeline> pipelines = mapping.getPipelineSelector()
         .getNode2PipelineMap().getPipelines(dns.get(0).getUuid());
     Assert.assertEquals(1, pipelines.size());
-    pipelines.forEach(p -> Assert.assertEquals(p.getPipelineName(),
-        ratisContainer.getPipeline().getPipelineName()));
+    pipelines.forEach(p -> Assert.assertEquals(p.getId(),
+        ratisContainer.getPipeline().getId()));
 
 
     // Now close the container and it should not show up while fetching
@@ -111,7 +115,17 @@ public class TestNode2PipelineMap {
     mapping
         .updateContainerState(cId, HddsProtos.LifeCycleEvent.CLOSE);
     NavigableSet<ContainerID> set2 = stateMap.getOpenContainerIDsByPipeline(
-        ratisContainer.getPipeline().getPipelineName());
+        ratisContainer.getPipeline().getId());
     Assert.assertEquals(0, set2.size());
+
+    try {
+      pipelineSelector.updatePipelineState(ratisContainer.getPipeline(),
+          HddsProtos.LifeCycleEvent.CLOSE);
+      Assert.fail("closing of pipeline without finalize should fail");
+    } catch (Exception e) {
+      Assert.assertTrue(e instanceof SCMException);
+      Assert.assertEquals(((SCMException)e).getResult(),
+          SCMException.ResultCodes.FAILED_TO_CHANGE_PIPELINE_STATE);
+    }
   }
 }

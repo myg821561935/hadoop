@@ -96,11 +96,10 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
    * headroom, etc.
    */
   private ContainerAllocation preCheckForNodeCandidateSet(
-      Resource clusterResource, CandidateNodeSet<FiCaSchedulerNode> candidates,
+      Resource clusterResource, FiCaSchedulerNode node,
       SchedulingMode schedulingMode, ResourceLimits resourceLimits,
       SchedulerRequestKey schedulerKey) {
     Priority priority = schedulerKey.getPriority();
-    FiCaSchedulerNode node = CandidateNodeSetUtils.getSingleNode(candidates);
 
     PendingAsk offswitchPendingAsk = application.getPendingAsk(schedulerKey,
         ResourceRequest.ANY);
@@ -164,7 +163,7 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
     }
 
     if (!checkHeadroom(clusterResource, resourceLimits, required,
-        candidates.getPartition())) {
+        node.getPartition())) {
       if (LOG.isDebugEnabled()) {
         LOG.debug("cannot allocate required resource=" + required
             + " because of headroom");
@@ -263,7 +262,7 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
             reservedContainer, schedulingMode, resourceLimits);
     
     if (null == reservedContainer) {
-      if (result.state == AllocationState.PRIORITY_SKIPPED) {
+      if (result.getAllocationState() == AllocationState.PRIORITY_SKIPPED) {
         // Don't count 'skipped nodes' as a scheduling opportunity!
         application.subtractSchedulingOpportunity(schedulerKey);
       }
@@ -487,8 +486,8 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
 
       // When a returned allocation is LOCALITY_SKIPPED, since we're in
       // off-switch request now, we will skip this app w.r.t priorities 
-      if (allocation.state == AllocationState.LOCALITY_SKIPPED) {
-        allocation.state = AllocationState.APP_SKIPPED;
+      if (allocation.getAllocationState() == AllocationState.LOCALITY_SKIPPED) {
+        allocation = ContainerAllocation.APP_SKIPPED;
       }
       allocation.requestLocalityType = requestLocalityType;
 
@@ -801,20 +800,6 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
     // Do checks before determining which node to allocate
     // Directly return if this check fails.
     ContainerAllocation result;
-    if (reservedContainer == null) {
-      result = preCheckForNodeCandidateSet(clusterResource, candidates,
-          schedulingMode, resourceLimits, schedulerKey);
-      if (null != result) {
-        return result;
-      }
-    } else {
-      // pre-check when allocating reserved container
-      if (application.getOutstandingAsksCount(schedulerKey) == 0) {
-        // Release
-        return new ContainerAllocation(reservedContainer, null,
-            AllocationState.QUEUE_SKIPPED);
-      }
-    }
 
     AppPlacementAllocator<FiCaSchedulerNode> schedulingPS =
         application.getAppSchedulingInfo().getAppPlacementAllocator(
@@ -833,11 +818,27 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
     while (iter.hasNext()) {
       FiCaSchedulerNode node = iter.next();
 
+      if (reservedContainer == null) {
+        result = preCheckForNodeCandidateSet(clusterResource, node,
+            schedulingMode, resourceLimits, schedulerKey);
+        if (null != result) {
+          continue;
+        }
+      } else {
+        // pre-check when allocating reserved container
+        if (application.getOutstandingAsksCount(schedulerKey) == 0) {
+          // Release
+          result = new ContainerAllocation(reservedContainer, null,
+              AllocationState.QUEUE_SKIPPED);
+          continue;
+        }
+      }
+
       result = tryAllocateOnNode(clusterResource, node, schedulingMode,
           resourceLimits, schedulerKey, reservedContainer);
 
-      if (AllocationState.ALLOCATED == result.state
-          || AllocationState.RESERVED == result.state) {
+      if (AllocationState.ALLOCATED == result.getAllocationState()
+          || AllocationState.RESERVED == result.getAllocationState()) {
         result = doAllocation(result, node, schedulerKey, reservedContainer);
         break;
       }
@@ -855,8 +856,8 @@ public class RegularContainerAllocator extends AbstractContainerAllocator {
 
     if (reservedContainer == null) {
       // Check if application needs more resource, skip if it doesn't need more.
-      if (!application.hasPendingResourceRequest(rc,
-          candidates.getPartition(), clusterResource, schedulingMode)) {
+      if (!application.hasPendingResourceRequest(candidates.getPartition(),
+          schedulingMode)) {
         if (LOG.isDebugEnabled()) {
           LOG.debug("Skip app_attempt=" + application.getApplicationAttemptId()
               + ", because it doesn't need more resource, schedulingMode="

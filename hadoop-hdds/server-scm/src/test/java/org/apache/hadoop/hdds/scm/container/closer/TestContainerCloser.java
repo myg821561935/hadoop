@@ -32,6 +32,7 @@ import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerReportsProto;
+import org.apache.hadoop.hdds.server.events.EventQueue;
 import org.apache.hadoop.ozone.OzoneConfigKeys;
 import org.apache.hadoop.ozone.container.common.SCMTestUtils;
 import org.apache.hadoop.test.GenericTestUtils;
@@ -44,6 +45,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.hadoop.hdds.HddsConfigKeys
+    .HDDS_CONTAINER_REPORT_INTERVAL;
 import static org.apache.hadoop.hdds.scm.ScmConfigKeys
     .OZONE_SCM_CONTAINER_SIZE_DEFAULT;
 import static org.apache.hadoop.hdds.scm.ScmConfigKeys
@@ -52,8 +55,6 @@ import static org.apache.hadoop.hdds.protocol.proto.HddsProtos.LifeCycleEvent
     .CREATE;
 import static org.apache.hadoop.hdds.protocol.proto.HddsProtos.LifeCycleEvent
     .CREATED;
-import static org.apache.hadoop.ozone.OzoneConfigKeys
-    .OZONE_CONTAINER_REPORT_INTERVAL;
 
 /**
  * Test class for Closing Container.
@@ -72,14 +73,15 @@ public class TestContainerCloser {
     configuration = SCMTestUtils.getConf();
     size = configuration.getLong(OZONE_SCM_CONTAINER_SIZE_GB,
         OZONE_SCM_CONTAINER_SIZE_DEFAULT) * 1024 * 1024 * 1024;
-    configuration.setTimeDuration(OZONE_CONTAINER_REPORT_INTERVAL,
+    configuration.setTimeDuration(HDDS_CONTAINER_REPORT_INTERVAL,
         1, TimeUnit.SECONDS);
     testDir = GenericTestUtils
         .getTestDir(TestContainerMapping.class.getSimpleName());
     configuration.set(OzoneConfigKeys.OZONE_METADATA_DIRS,
         testDir.getAbsolutePath());
     nodeManager = new MockNodeManager(true, 10);
-    mapping = new ContainerMapping(configuration, nodeManager, 128);
+    mapping = new ContainerMapping(configuration, nodeManager, 128,
+        new EventQueue());
   }
 
   @AfterClass
@@ -137,7 +139,7 @@ public class TestContainerCloser {
     // second report is discarded by the system if it lands in the 3 * report
     // frequency window.
 
-    configuration.setTimeDuration(OZONE_CONTAINER_REPORT_INTERVAL, 1,
+    configuration.setTimeDuration(HDDS_CONTAINER_REPORT_INTERVAL, 1,
         TimeUnit.SECONDS);
 
     ContainerWithPipeline containerWithPipeline = mapping.allocateContainer(
@@ -219,7 +221,7 @@ public class TestContainerCloser {
         .setWriteBytes(2000000000L)
         .setDeleteTransactionId(0);
     reports.addReports(ciBuilder);
-    mapping.processContainerReports(TestUtils.getDatanodeDetails(),
+    mapping.processContainerReports(TestUtils.randomDatanodeDetails(),
         reports.build());
   }
 }

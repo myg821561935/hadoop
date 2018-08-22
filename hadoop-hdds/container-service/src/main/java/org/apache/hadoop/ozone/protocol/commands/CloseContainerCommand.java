@@ -22,6 +22,7 @@ import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.SCMCommandProto;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.CloseContainerCommandProto;
+import org.apache.hadoop.hdds.scm.container.common.helpers.PipelineID;
 
 /**
  * Asks datanode to close a container.
@@ -31,20 +32,25 @@ public class CloseContainerCommand
 
   private long containerID;
   private HddsProtos.ReplicationType replicationType;
+  private PipelineID pipelineID;
 
   public CloseContainerCommand(long containerID,
-      HddsProtos.ReplicationType replicationType) {
+      HddsProtos.ReplicationType replicationType,
+      PipelineID pipelineID) {
     super();
     this.containerID = containerID;
     this.replicationType = replicationType;
+    this.pipelineID = pipelineID;
   }
 
   // Should be called only for protobuf conversion
   private CloseContainerCommand(long containerID,
-      HddsProtos.ReplicationType replicationType, long cmdId) {
-    super(cmdId);
+      HddsProtos.ReplicationType replicationType,
+      PipelineID pipelineID, long id) {
+    super(id);
     this.containerID = containerID;
     this.replicationType = replicationType;
+    this.pipelineID = pipelineID;
   }
 
   /**
@@ -70,16 +76,19 @@ public class CloseContainerCommand
   public CloseContainerCommandProto getProto() {
     return CloseContainerCommandProto.newBuilder()
         .setContainerID(containerID)
-        .setCmdId(getCmdId())
-        .setReplicationType(replicationType).build();
+        .setCmdId(getId())
+        .setReplicationType(replicationType)
+        .setPipelineID(pipelineID.getProtobuf())
+        .build();
   }
 
   public static CloseContainerCommand getFromProtobuf(
       CloseContainerCommandProto closeContainerProto) {
     Preconditions.checkNotNull(closeContainerProto);
     return new CloseContainerCommand(closeContainerProto.getContainerID(),
-        closeContainerProto.getReplicationType(), closeContainerProto
-        .getCmdId());
+        closeContainerProto.getReplicationType(),
+        PipelineID.getFromProtobuf(closeContainerProto.getPipelineID()),
+        closeContainerProto.getCmdId());
   }
 
   public long getContainerID() {

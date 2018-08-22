@@ -156,11 +156,6 @@ public final class ScmConfigKeys {
       "ozone.scm.handler.count.key";
   public static final int OZONE_SCM_HANDLER_COUNT_DEFAULT = 10;
 
-  public static final String OZONE_SCM_HEARTBEAT_INTERVAL =
-      "ozone.scm.heartbeat.interval";
-  public static final String OZONE_SCM_HEARBEAT_INTERVAL_DEFAULT =
-      "30s";
-
   public static final String OZONE_SCM_DEADNODE_INTERVAL =
       "ozone.scm.dead.node.interval";
   public static final String OZONE_SCM_DEADNODE_INTERVAL_DEFAULT =
@@ -241,6 +236,11 @@ public final class ScmConfigKeys {
   public static final String
       OZONE_SCM_CONTAINER_CREATION_LEASE_TIMEOUT_DEFAULT = "60s";
 
+  public static final String OZONE_SCM_PIPELINE_CREATION_LEASE_TIMEOUT =
+      "ozone.scm.pipeline.creation.lease.timeout";
+
+  public static final String
+      OZONE_SCM_PIPELINE_CREATION_LEASE_TIMEOUT_DEFAULT = "60s";
 
   public static final String OZONE_SCM_BLOCK_DELETION_MAX_RETRY =
       "ozone.scm.block.deletion.max.retry";
@@ -251,6 +251,13 @@ public final class ScmConfigKeys {
   public static final String OZONE_SCM_CONTAINER_CLOSE_THRESHOLD =
       "ozone.scm.container.close.threshold";
   public static final float OZONE_SCM_CONTAINER_CLOSE_THRESHOLD_DEFAULT = 0.9f;
+
+  public static final String HDDS_SCM_WATCHER_TIMEOUT =
+      "hdds.scm.watcher.timeout";
+
+  public static final String HDDS_SCM_WATCHER_TIMEOUT_DEFAULT =
+      "10m";
+
   /**
    * Never constructed.
    */

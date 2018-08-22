@@ -19,7 +19,9 @@
 package org.apache.hadoop.yarn.service.component;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.yarn.api.records.Container;
+import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.ExecutionType;
 import static org.apache.hadoop.yarn.service.api.records.Component
@@ -42,6 +44,7 @@ import org.apache.hadoop.yarn.service.ServiceEventType;
 import org.apache.hadoop.yarn.service.api.records.ContainerState;
 import org.apache.hadoop.yarn.service.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.service.component.instance.ComponentInstance;
+import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEventType;
 import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceId;
 import org.apache.hadoop.yarn.service.ContainerFailureTracker;
 import org.apache.hadoop.yarn.service.ServiceContext;
@@ -518,10 +521,10 @@ public class Component implements EventHandler<ComponentEvent> {
   private static class ContainerCompletedTransition extends BaseTransition {
     @Override
     public void transition(Component component, ComponentEvent event) {
-
+      Preconditions.checkNotNull(event.getContainerId());
       component.updateMetrics(event.getStatus());
       component.dispatcher.getEventHandler().handle(
-          new ComponentInstanceEvent(event.getStatus().getContainerId(), STOP)
+          new ComponentInstanceEvent(event.getContainerId(), STOP)
               .setStatus(event.getStatus()));
 
       ComponentRestartPolicy restartPolicy =
@@ -545,13 +548,21 @@ public class Component implements EventHandler<ComponentEvent> {
     @Override
     public void transition(Component component, ComponentEvent event) {
       component.upgradeInProgress.set(true);
+      component.upgradeEvent = event;
       component.componentSpec.setState(org.apache.hadoop.yarn.service.api.
           records.ComponentState.NEEDS_UPGRADE);
       component.numContainersThatNeedUpgrade.set(
           component.componentSpec.getNumberOfContainers());
-      component.componentSpec.getContainers().forEach(container ->
-          container.setState(ContainerState.NEEDS_UPGRADE));
-      component.upgradeEvent = event;
+      component.componentSpec.getContainers().forEach(container -> {
+        container.setState(ContainerState.NEEDS_UPGRADE);
+        if (event.isExpressUpgrade()) {
+          ComponentInstanceEvent upgradeEvent = new ComponentInstanceEvent(
+              ContainerId.fromString(container.getId()),
+                  ComponentInstanceEventType.UPGRADE);
+          LOG.info("Upgrade container {}", container.getId());
+          component.dispatcher.getEventHandler().handle(upgradeEvent);
+        }
+      });
     }
   }
 
@@ -634,7 +645,8 @@ public class Component implements EventHandler<ComponentEvent> {
             version);
     launchContext.setArtifact(compSpec.getArtifact())
         .setConfiguration(compSpec.getConfiguration())
-        .setLaunchCommand(compSpec.getLaunchCommand());
+        .setLaunchCommand(compSpec.getLaunchCommand())
+        .setRunPrivilegedContainer(compSpec.getRunPrivilegedContainer());
     return launchContext;
   }
 
@@ -784,28 +796,33 @@ public class Component implements EventHandler<ComponentEvent> {
   }
 
   private void updateMetrics(ContainerStatus status) {
-    switch (status.getExitStatus()) {
-    case SUCCESS:
-      componentMetrics.containersSucceeded.incr();
-      scheduler.getServiceMetrics().containersSucceeded.incr();
-      return;
-    case PREEMPTED:
-      componentMetrics.containersPreempted.incr();
-      scheduler.getServiceMetrics().containersPreempted.incr();
-      break;
-    case DISKS_FAILED:
-      componentMetrics.containersDiskFailure.incr();
-      scheduler.getServiceMetrics().containersDiskFailure.incr();
-      break;
-    default:
-      break;
+    //when a container preparation fails while building launch context, then
+    //the container status may not exist.
+    if (status != null) {
+      switch (status.getExitStatus()) {
+        case SUCCESS:
+          componentMetrics.containersSucceeded.incr();
+          scheduler.getServiceMetrics().containersSucceeded.incr();
+          return;
+        case PREEMPTED:
+          componentMetrics.containersPreempted.incr();
+          scheduler.getServiceMetrics().containersPreempted.incr();
+          break;
+        case DISKS_FAILED:
+          componentMetrics.containersDiskFailure.incr();
+          scheduler.getServiceMetrics().containersDiskFailure.incr();
+          break;
+        default:
+          break;
+      }
     }
 
     // containersFailed include preempted, disks_failed etc.
     componentMetrics.containersFailed.incr();
     scheduler.getServiceMetrics().containersFailed.incr();
 
-    if (Apps.shouldCountTowardsNodeBlacklisting(status.getExitStatus())) {
+    if (status != null && Apps.shouldCountTowardsNodeBlacklisting(
+        status.getExitStatus())) {
       String host = scheduler.getLiveInstances().get(status.getContainerId())
           .getNodeId().getHost();
       failureTracker.incNodeFailure(host);
