@@ -180,7 +180,7 @@ public class ContainerOperationClient implements ScmClient {
     //    ObjectStageChangeRequestProto.Op.create,
     //    ObjectStageChangeRequestProto.Stage.begin);
 
-    client.createPipeline(pipeline);
+    client.createPipeline();
 
     //storageContainerLocationClient.notifyObjectStageChange(
     //    ObjectStageChangeRequestProto.Type.pipeline,
@@ -255,6 +255,15 @@ public class ContainerOperationClient implements ScmClient {
       throws IOException {
     return storageContainerLocationClient.createReplicationPipeline(type,
         factor, nodePool);
+  }
+
+  @Override
+  public void close() {
+    try {
+      xceiverClientManager.close();
+    } catch (Exception ex) {
+      LOG.error("Can't close " + this.getClass().getSimpleName(), ex);
+    }
   }
 
   /**

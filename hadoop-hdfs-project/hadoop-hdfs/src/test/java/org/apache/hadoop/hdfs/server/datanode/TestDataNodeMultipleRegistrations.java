@@ -29,8 +29,8 @@ import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
@@ -47,8 +47,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class TestDataNodeMultipleRegistrations {
-  private static final Log LOG = 
-    LogFactory.getLog(TestDataNodeMultipleRegistrations.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(TestDataNodeMultipleRegistrations.class);
   Configuration conf;
 
   @Before
@@ -250,7 +250,7 @@ public class TestDataNodeMultipleRegistrations {
     try {
       cluster.startDataNodes(conf, 1, true, null, null);
       // let the initialization be complete
-      Thread.sleep(10000);
+      cluster.waitActive();
       DataNode dn = cluster.getDataNodes().get(0);
       assertTrue("Datanode should be running", dn.isDatanodeUp());
       assertEquals("Only one BPOfferService should be running", 1,
@@ -274,7 +274,7 @@ public class TestDataNodeMultipleRegistrations {
     try {
       cluster.startDataNodes(conf, 1, true, null, null);
       // let the initialization be complete
-      Thread.sleep(10000);
+      cluster.waitActive();
       DataNode dn = cluster.getDataNodes().get(0);
       assertTrue("Datanode should be running", dn.isDatanodeUp());
       assertEquals("BPOfferService should be running", 1,

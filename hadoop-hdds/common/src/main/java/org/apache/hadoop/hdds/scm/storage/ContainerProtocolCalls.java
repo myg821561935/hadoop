@@ -18,6 +18,8 @@
 
 package org.apache.hadoop.hdds.scm.storage;
 
+import org.apache.hadoop.hdds.scm.container.common.helpers
+    .BlockNotCommittedException;
 import org.apache.ratis.shaded.com.google.protobuf.ByteString;
 import org.apache.hadoop.hdds.scm.XceiverClientSpi;
 import org.apache.hadoop.hdds.scm.container.common.helpers
@@ -113,8 +115,8 @@ public final class ContainerProtocolCalls  {
    * @throws IOException if there is an I/O error while performing the call
    */
   public static ContainerProtos.GetCommittedBlockLengthResponseProto
-  getCommittedBlockLength(
-      XceiverClientSpi xceiverClient, BlockID blockID, String traceID)
+      getCommittedBlockLength(
+          XceiverClientSpi xceiverClient, BlockID blockID, String traceID)
       throws IOException {
     ContainerProtos.GetCommittedBlockLengthRequestProto.Builder
         getBlockLengthRequestBuilder =
@@ -375,7 +377,7 @@ public final class ContainerProtocolCalls  {
   }
 
   /**
-   * Reads the data given the blockID
+   * Reads the data given the blockID.
    *
    * @param client
    * @param blockID - ID of the block
@@ -420,6 +422,9 @@ public final class ContainerProtocolCalls  {
   ) throws StorageContainerException {
     if (response.getResult() == ContainerProtos.Result.SUCCESS) {
       return;
+    } else if (response.getResult()
+        == ContainerProtos.Result.BLOCK_NOT_COMMITTED) {
+      throw new BlockNotCommittedException(response.getMessage());
     }
     throw new StorageContainerException(
         response.getMessage(), response.getResult());

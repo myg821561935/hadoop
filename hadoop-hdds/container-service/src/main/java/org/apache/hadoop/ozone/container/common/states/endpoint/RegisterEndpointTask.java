@@ -21,6 +21,8 @@ import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
+import org.apache.hadoop.hdds.protocol.proto
+        .StorageContainerDatanodeProtocolProtos.PipelineReportsProto;
 import org.apache.hadoop.ozone.container.common.statemachine
     .EndpointStateMachine;
 import org.apache.hadoop.hdds.protocol.proto
@@ -29,6 +31,7 @@ import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerReportsProto;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.SCMRegisteredResponseProto;
+import org.apache.hadoop.ozone.container.common.statemachine.StateContext;
 import org.apache.hadoop.ozone.container.ozoneimpl.OzoneContainer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +53,7 @@ public final class RegisterEndpointTask implements
   private Future<EndpointStateMachine.EndPointStates> result;
   private DatanodeDetails datanodeDetails;
   private final OzoneContainer datanodeContainerManager;
+  private StateContext stateContext;
 
   /**
    * Creates a register endpoint task.
@@ -60,10 +64,12 @@ public final class RegisterEndpointTask implements
    */
   @VisibleForTesting
   public RegisterEndpointTask(EndpointStateMachine rpcEndPoint,
-      Configuration conf, OzoneContainer ozoneContainer) {
+      Configuration conf, OzoneContainer ozoneContainer,
+      StateContext context) {
     this.rpcEndPoint = rpcEndPoint;
     this.conf = conf;
     this.datanodeContainerManager = ozoneContainer;
+    this.stateContext = context;
 
   }
 
@@ -104,13 +110,15 @@ public final class RegisterEndpointTask implements
     rpcEndPoint.lock();
     try {
 
-      ContainerReportsProto contianerReport = datanodeContainerManager
+      ContainerReportsProto containerReport = datanodeContainerManager
           .getContainerReport();
       NodeReportProto nodeReport = datanodeContainerManager.getNodeReport();
+      PipelineReportsProto pipelineReportsProto =
+              datanodeContainerManager.getPipelineReport();
       // TODO : Add responses to the command Queue.
       SCMRegisteredResponseProto response = rpcEndPoint.getEndPoint()
           .register(datanodeDetails.getProtoBufMessage(), nodeReport,
-              contianerReport);
+                  containerReport, pipelineReportsProto);
       Preconditions.checkState(UUID.fromString(response.getDatanodeUUID())
               .equals(datanodeDetails.getUuid()),
           "Unexpected datanode ID in the response.");
@@ -124,6 +132,7 @@ public final class RegisterEndpointTask implements
           rpcEndPoint.getState().getNextState();
       rpcEndPoint.setState(nextState);
       rpcEndPoint.zeroMissedCount();
+      this.stateContext.configureHeartbeatFrequency();
     } catch (IOException ex) {
       rpcEndPoint.logIfNeeded(ex);
     } finally {
@@ -150,6 +159,7 @@ public final class RegisterEndpointTask implements
     private Configuration conf;
     private DatanodeDetails datanodeDetails;
     private OzoneContainer container;
+    private StateContext context;
 
     /**
      * Constructs the builder class.
@@ -200,6 +210,10 @@ public final class RegisterEndpointTask implements
       return this;
     }
 
+    public Builder setContext(StateContext stateContext) {
+      this.context = stateContext;
+      return this;
+    }
 
     public RegisterEndpointTask build() {
       if (endPointStateMachine == null) {
@@ -210,8 +224,9 @@ public final class RegisterEndpointTask implements
 
       if (conf == null) {
         LOG.error("No config specified.");
-        throw new IllegalArgumentException("A valid configration is needed to" +
-            " construct RegisterEndpoint task");
+        throw new IllegalArgumentException(
+            "A valid configuration is needed to construct RegisterEndpoint "
+                + "task");
       }
 
       if (datanodeDetails == null) {
@@ -223,13 +238,20 @@ public final class RegisterEndpointTask implements
       if (container == null) {
         LOG.error("Container is not specified");
         throw new IllegalArgumentException("Container is not specified to " +
-            "constrict RegisterEndpoint task");
+            "construct RegisterEndpoint task");
+      }
+
+      if (context == null) {
+        LOG.error("StateContext is not specified");
+        throw new IllegalArgumentException("Container is not specified to " +
+            "construct RegisterEndpoint task");
       }
 
       RegisterEndpointTask task = new RegisterEndpointTask(this
-          .endPointStateMachine, this.conf, this.container);
+          .endPointStateMachine, this.conf, this.container, this.context);
       task.setDatanodeDetails(datanodeDetails);
       return task;
     }
+
   }
 }

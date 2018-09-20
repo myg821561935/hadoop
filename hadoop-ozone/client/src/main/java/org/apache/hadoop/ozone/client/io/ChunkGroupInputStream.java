@@ -71,7 +71,7 @@ public class ChunkGroupInputStream extends InputStream implements Seekable {
   }
 
   @VisibleForTesting
-  public long getRemainingOfIndex(int index) {
+  public long getRemainingOfIndex(int index) throws IOException {
     return streamEntries.get(index).getRemaining();
   }
 
@@ -115,19 +115,20 @@ public class ChunkGroupInputStream extends InputStream implements Seekable {
         return totalReadLen == 0 ? EOF : totalReadLen;
       }
       ChunkInputStreamEntry current = streamEntries.get(currentStreamIndex);
-      int readLen = Math.min(len, (int)current.getRemaining());
-      int actualLen = current.read(b, off, readLen);
-      // this means the underlying stream has nothing at all, return
-      if (actualLen == EOF) {
-        return totalReadLen > 0 ? totalReadLen : EOF;
+      int numBytesToRead = Math.min(len, (int)current.getRemaining());
+      int numBytesRead = current.read(b, off, numBytesToRead);
+      if (numBytesRead != numBytesToRead) {
+        // This implies that there is either data loss or corruption in the
+        // chunk entries. Even EOF in the current stream would be covered in
+        // this case.
+        throw new IOException(String.format(
+            "Inconsistent read for blockID=%s length=%d numBytesRead=%d",
+            current.chunkInputStream.getBlockID(), current.length,
+            numBytesRead));
       }
-      totalReadLen += actualLen;
-      // this means there is no more data to read beyond this point, return
-      if (actualLen != readLen) {
-        return totalReadLen;
-      }
-      off += readLen;
-      len -= readLen;
+      totalReadLen += numBytesRead;
+      off += numBytesRead;
+      len -= numBytesRead;
       if (current.getRemaining() <= 0) {
         currentStreamIndex += 1;
       }
@@ -206,31 +207,27 @@ public class ChunkGroupInputStream extends InputStream implements Seekable {
 
     private final ChunkInputStream chunkInputStream;
     private final long length;
-    private long currentPosition;
 
     public ChunkInputStreamEntry(ChunkInputStream chunkInputStream,
         long length) {
       this.chunkInputStream = chunkInputStream;
       this.length = length;
-      this.currentPosition = 0;
     }
 
-    synchronized long getRemaining() {
-      return length - currentPosition;
+    synchronized long getRemaining() throws IOException {
+      return length - getPos();
     }
 
     @Override
     public synchronized int read(byte[] b, int off, int len)
         throws IOException {
       int readLen = chunkInputStream.read(b, off, len);
-      currentPosition += readLen;
       return readLen;
     }
 
     @Override
     public synchronized int read() throws IOException {
       int data = chunkInputStream.read();
-      currentPosition += 1;
       return data;
     }
 

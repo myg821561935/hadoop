@@ -308,63 +308,66 @@ public class ResourceLocalizationService extends CompositeService
         String user = userEntry.getKey();
         RecoveredUserResources userResources = userEntry.getValue();
         trackerState = userResources.getPrivateTrackerState();
-        if (!trackerState.isEmpty()) {
-          LocalResourcesTracker tracker = new LocalResourcesTrackerImpl(user,
-              null, dispatcher, true, super.getConfig(), stateStore,
-              dirsHandler);
-          LocalResourcesTracker oldTracker = privateRsrc.putIfAbsent(user,
-              tracker);
-          if (oldTracker != null) {
-            tracker = oldTracker;
-          }
-          recoverTrackerResources(tracker, trackerState);
+        LocalResourcesTracker tracker = new LocalResourcesTrackerImpl(user,
+            null, dispatcher, true, super.getConfig(), stateStore,
+            dirsHandler);
+        LocalResourcesTracker oldTracker = privateRsrc.putIfAbsent(user,
+            tracker);
+        if (oldTracker != null) {
+          tracker = oldTracker;
         }
+        recoverTrackerResources(tracker, trackerState);
 
         for (Map.Entry<ApplicationId, LocalResourceTrackerState> appEntry :
             userResources.getAppTrackerStates().entrySet()) {
           trackerState = appEntry.getValue();
-          if (!trackerState.isEmpty()) {
-            ApplicationId appId = appEntry.getKey();
-            String appIdStr = appId.toString();
-            LocalResourcesTracker tracker = new LocalResourcesTrackerImpl(user,
-                appId, dispatcher, false, super.getConfig(), stateStore,
-                dirsHandler);
-            LocalResourcesTracker oldTracker = appRsrc.putIfAbsent(appIdStr,
-                tracker);
-            if (oldTracker != null) {
-              tracker = oldTracker;
-            }
-            recoverTrackerResources(tracker, trackerState);
+          ApplicationId appId = appEntry.getKey();
+          String appIdStr = appId.toString();
+          LocalResourcesTracker tracker1 = new LocalResourcesTrackerImpl(user,
+              appId, dispatcher, false, super.getConfig(), stateStore,
+              dirsHandler);
+          LocalResourcesTracker oldTracker1 = appRsrc.putIfAbsent(appIdStr,
+              tracker1);
+          if (oldTracker1 != null) {
+            tracker1 = oldTracker1;
           }
+          recoverTrackerResources(tracker1, trackerState);
         }
       }
     }
   }
 
   private void recoverTrackerResources(LocalResourcesTracker tracker,
-      LocalResourceTrackerState state) throws URISyntaxException {
-    for (LocalizedResourceProto proto : state.getLocalizedResources()) {
-      LocalResource rsrc = new LocalResourcePBImpl(proto.getResource());
-      LocalResourceRequest req = new LocalResourceRequest(rsrc);
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Recovering localized resource " + req + " at "
-            + proto.getLocalPath());
+      LocalResourceTrackerState state) throws URISyntaxException, IOException {
+    try (RecoveryIterator<LocalizedResourceProto> it =
+             state.getCompletedResourcesIterator()) {
+      while (it != null && it.hasNext()) {
+        LocalizedResourceProto proto = it.next();
+        LocalResource rsrc = new LocalResourcePBImpl(proto.getResource());
+        LocalResourceRequest req = new LocalResourceRequest(rsrc);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Recovering localized resource " + req + " at "
+              + proto.getLocalPath());
+        }
+        tracker.handle(new ResourceRecoveredEvent(req,
+            new Path(proto.getLocalPath()), proto.getSize()));
       }
-      tracker.handle(new ResourceRecoveredEvent(req,
-          new Path(proto.getLocalPath()), proto.getSize()));
     }
 
-    for (Map.Entry<LocalResourceProto, Path> entry :
-         state.getInProgressResources().entrySet()) {
-      LocalResource rsrc = new LocalResourcePBImpl(entry.getKey());
-      LocalResourceRequest req = new LocalResourceRequest(rsrc);
-      Path localPath = entry.getValue();
-      tracker.handle(new ResourceRecoveredEvent(req, localPath, 0));
+    try (RecoveryIterator<Map.Entry<LocalResourceProto, Path>> it =
+             state.getStartedResourcesIterator()) {
+      while (it != null && it.hasNext()) {
+        Map.Entry<LocalResourceProto, Path> entry = it.next();
+        LocalResource rsrc = new LocalResourcePBImpl(entry.getKey());
+        LocalResourceRequest req = new LocalResourceRequest(rsrc);
+        Path localPath = entry.getValue();
+        tracker.handle(new ResourceRecoveredEvent(req, localPath, 0));
 
-      // delete any in-progress localizations, containers will request again
-      LOG.info("Deleting in-progress localization for " + req + " at "
-          + localPath);
-      tracker.remove(tracker.getLocalizedResource(req), delService);
+        // delete any in-progress localizations, containers will request again
+        LOG.info("Deleting in-progress localization for " + req + " at "
+            + localPath);
+        tracker.remove(tracker.getLocalizedResource(req), delService);
+      }
     }
 
     // TODO: remove untracked directories in local filesystem
@@ -885,6 +888,9 @@ public class ResourceLocalizationService extends CompositeService
             Path publicDirDestPath =
                 publicRsrc.getPathForLocalization(key, publicRootPath,
                     delService);
+            if (publicDirDestPath == null) {
+              return;
+            }
             if (!publicDirDestPath.getParent().equals(publicRootPath)) {
               createParentDirs(publicDirDestPath, publicRootPath);
               if (diskValidator != null) {
@@ -1175,10 +1181,11 @@ public class ResourceLocalizationService extends CompositeService
           LocalResourcesTracker tracker = getLocalResourcesTracker(
               next.getVisibility(), user, applicationId);
           if (tracker != null) {
-            ResourceLocalizationSpec resource =
-                NodeManagerBuilderUtils.newResourceLocalizationSpec(next,
-                getPathForLocalization(next, tracker));
-            rsrcs.add(resource);
+            Path localPath = getPathForLocalization(next, tracker);
+            if (localPath != null) {
+              rsrcs.add(NodeManagerBuilderUtils.newResourceLocalizationSpec(
+                  next, localPath));
+            }
           }
         } catch (IOException e) {
           LOG.error("local path for PRIVATE localization could not be " +

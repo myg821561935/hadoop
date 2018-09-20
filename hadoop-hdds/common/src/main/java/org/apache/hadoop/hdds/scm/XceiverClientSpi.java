@@ -20,7 +20,6 @@ package org.apache.hadoop.hdds.scm;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
-import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerCommandRequestProto;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
@@ -29,7 +28,6 @@ import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -113,10 +111,14 @@ public abstract class XceiverClientSpi implements Closeable {
 
   /**
    * Create a pipeline.
-   *
-   * @param pipeline -  pipeline to be created.
    */
-  public abstract void createPipeline(Pipeline pipeline) throws IOException;
+  public abstract void createPipeline() throws IOException;
+
+  /**
+   * Destroy a pipeline.
+   * @throws IOException
+   */
+  public abstract void destroyPipeline() throws IOException;
 
   /**
    * Returns pipeline Type.

@@ -58,6 +58,7 @@ public class ContainerInfo implements Comparator<ContainerInfo>,
   }
 
   private HddsProtos.LifeCycleState state;
+  @JsonIgnore
   private PipelineID pipelineID;
   private ReplicationFactor replicationFactor;
   private ReplicationType replicationType;
@@ -105,6 +106,13 @@ public class ContainerInfo implements Comparator<ContainerInfo>,
     this.replicationType = repType;
   }
 
+  public ContainerInfo(ContainerInfo info) {
+    this(info.getContainerID(), info.getState(), info.getPipelineID(),
+        info.getAllocatedBytes(), info.getUsedBytes(), info.getNumberOfKeys(),
+        info.getStateEnterTime(), info.getOwner(),
+        info.getDeleteTransactionId(), info.getReplicationFactor(),
+        info.getReplicationType());
+  }
   /**
    * Needed for serialization findbugs.
    */
@@ -212,6 +220,7 @@ public class ContainerInfo implements Comparator<ContainerInfo>,
   public HddsProtos.SCMContainerInfo getProtobuf() {
     HddsProtos.SCMContainerInfo.Builder builder =
         HddsProtos.SCMContainerInfo.newBuilder();
+    Preconditions.checkState(containerID > 0);
     return builder.setAllocatedBytes(getAllocatedBytes())
         .setContainerID(getContainerID())
         .setUsedBytes(getUsedBytes())
@@ -236,7 +245,8 @@ public class ContainerInfo implements Comparator<ContainerInfo>,
   @Override
   public String toString() {
     return "ContainerInfo{"
-        + "state=" + state
+        + "id=" + containerID
+        + ", state=" + state
         + ", pipelineID=" + pipelineID
         + ", stateEnterTime=" + stateEnterTime
         + ", owner=" + owner
@@ -395,13 +405,13 @@ public class ContainerInfo implements Comparator<ContainerInfo>,
     private ReplicationType replicationType;
 
     public Builder setReplicationType(
-        ReplicationType replicationType) {
-      this.replicationType = replicationType;
+        ReplicationType repType) {
+      this.replicationType = repType;
       return this;
     }
 
-    public Builder setPipelineID(PipelineID pipelineID) {
-      this.pipelineID = pipelineID;
+    public Builder setPipelineID(PipelineID pipelineId) {
+      this.pipelineID = pipelineId;
       return this;
     }
 
@@ -446,8 +456,8 @@ public class ContainerInfo implements Comparator<ContainerInfo>,
       return this;
     }
 
-    public Builder setDeleteTransactionId(long deleteTransactionId) {
-      this.deleteTransactionId = deleteTransactionId;
+    public Builder setDeleteTransactionId(long deleteTransactionID) {
+      this.deleteTransactionId = deleteTransactionID;
       return this;
     }
 

@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.qjournal.client;
 
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.anyLong;
+import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Matchers.eq;
 
 import java.io.IOException;
@@ -37,7 +38,7 @@ import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeLayoutVersion;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.test.GenericTestUtils;
-import org.apache.log4j.Level;
+import org.slf4j.event.Level;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
@@ -55,7 +56,7 @@ import static org.apache.hadoop.hdfs.qjournal.QJMTestUtil.writeOp;
  */
 public class TestQuorumJournalManagerUnit {
   static {
-    GenericTestUtils.setLogLevel(QuorumJournalManager.LOG, Level.ALL);
+    GenericTestUtils.setLogLevel(QuorumJournalManager.LOG, Level.TRACE);
   }
   private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
       12345, "mycluster", "my-bp", 0L);
@@ -89,7 +90,8 @@ public class TestQuorumJournalManagerUnit {
           NewEpochResponseProto.newBuilder().build()
           ).when(logger).newEpoch(Mockito.anyLong());
       
-      futureReturns(null).when(logger).format(Mockito.<NamespaceInfo>any());
+      futureReturns(null).when(logger).format(Mockito.<NamespaceInfo>any(),
+          anyBoolean());
     }
     
     qjm.recoverUnfinalizedSegments();

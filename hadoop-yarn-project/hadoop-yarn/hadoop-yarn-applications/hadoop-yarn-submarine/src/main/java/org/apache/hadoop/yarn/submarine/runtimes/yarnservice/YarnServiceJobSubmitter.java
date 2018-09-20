@@ -15,6 +15,7 @@
 package org.apache.hadoop.yarn.submarine.runtimes.yarnservice;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableMap;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -58,6 +59,10 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
   ClientContext clientContext;
   Service serviceSpec;
   private Set<Path> uploadedFiles = new HashSet<>();
+
+  // Used by testing
+  private Map<String, String> componentToLocalLaunchScriptPath =
+      new HashMap<>();
 
   public YarnServiceJobSubmitter(ClientContext clientContext) {
     this.clientContext = clientContext;
@@ -125,6 +130,7 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
         fw.append("export HADOOP_HOME=\n");
         fw.append("export HADOOP_YARN_HOME=\n");
         fw.append("export HADOOP_HDFS_HOME=" + hdfsHome + "\n");
+        fw.append("export HADOOP_COMMON_HOME=" + hdfsHome + "\n");
       } else{
         lackingEnvs = true;
       }
@@ -170,10 +176,12 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
 
     // DEBUG
     if (SubmarineLogs.isVerbose()) {
-      fw.append("echo $CLASSPATH\n");
-      fw.append("echo $JAVA_HOME\n");
-      fw.append("echo $LD_LIBRARY_PATH\n");
-      fw.append("echo $HADOOP_HDFS_HOME\n");
+      fw.append("echo \"CLASSPATH:$CLASSPATH\"\n");
+      fw.append("echo \"HADOOP_CONF_DIR:$HADOOP_CONF_DIR\"\n");
+      fw.append("echo \"HADOOP_TOKEN_FILE_LOCATION:$HADOOP_TOKEN_FILE_LOCATION\"\n");
+      fw.append("echo \"JAVA_HOME:$JAVA_HOME\"\n");
+      fw.append("echo \"LD_LIBRARY_PATH:$LD_LIBRARY_PATH\"\n");
+      fw.append("echo \"HADOOP_HDFS_HOME:$HADOOP_HDFS_HOME\"\n");
     }
   }
 
@@ -181,6 +189,14 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
     Map<String, String> envs = component.getConfiguration().getEnv();
     envs.put(Envs.TASK_INDEX_ENV, ServiceApiConstants.COMPONENT_ID);
     envs.put(Envs.TASK_TYPE_ENV, taskType.name());
+  }
+
+  private String getUserName() {
+    return System.getProperty("user.name");
+  }
+
+  private String getDNSDomain() {
+    return clientContext.getYarnConfig().get("hadoop.registry.dns.domain-name");
   }
 
   /*
@@ -191,50 +207,48 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
     File file = File.createTempFile(taskType.name() + "-launch-script", ".sh");
     FileWriter fw = new FileWriter(file);
 
-    fw.append("#!/bin/bash\n");
+    try {
+      fw.append("#!/bin/bash\n");
 
-    addHdfsClassPathIfNeeded(parameters, fw, comp);
+      addHdfsClassPathIfNeeded(parameters, fw, comp);
 
-    // For primary_worker
-    if (taskType == TaskType.PRIMARY_WORKER) {
-      // Do we need tensorboard?
-      if (parameters.isTensorboardEnabled()) {
-        int tensorboardPort = 6006;
-        // Run tensorboard at the background
-        fw.append(
-            "tensorboard --port " + tensorboardPort + " --logdir " + parameters
-                .getCheckpointPath() + " &\n");
+      if (taskType.equals(TaskType.TENSORBOARD)) {
+        String tbCommand =
+            "export LC_ALL=C && tensorboard --logdir=" + parameters
+                .getCheckpointPath();
+        fw.append(tbCommand + "\n");
+        LOG.info("Tensorboard command=" + tbCommand);
+      } else{
+        // When distributed training is required
+        if (parameters.isDistributed()) {
+          // Generated TF_CONFIG
+          String tfConfigEnv = YarnServiceUtils.getTFConfigEnv(
+              taskType.getComponentName(), parameters.getNumWorkers(),
+              parameters.getNumPS(), parameters.getName(), getUserName(),
+              getDNSDomain());
+          fw.append("export TF_CONFIG=\"" + tfConfigEnv + "\"\n");
+        }
+
+        // Print launch command
+        if (taskType.equals(TaskType.WORKER) || taskType.equals(
+            TaskType.PRIMARY_WORKER)) {
+          fw.append(parameters.getWorkerLaunchCmd() + '\n');
+
+          if (SubmarineLogs.isVerbose()) {
+            LOG.info(
+                "Worker command =[" + parameters.getWorkerLaunchCmd() + "]");
+          }
+        } else if (taskType.equals(TaskType.PS)) {
+          fw.append(parameters.getPSLaunchCmd() + '\n');
+
+          if (SubmarineLogs.isVerbose()) {
+            LOG.info("PS command =[" + parameters.getPSLaunchCmd() + "]");
+          }
+        }
       }
+    } finally {
+      fw.close();
     }
-
-    // When distributed training is required
-    if (parameters.isDistributed()) {
-      // Generated TF_CONFIG
-      String tfConfigEnv = YarnServiceUtils.getTFConfigEnv(
-          taskType.getComponentName(), parameters.getNumWorkers(),
-          parameters.getNumPS(), parameters.getName(),
-          System.getProperty("user.name"),
-          clientContext.getYarnConfig().get("hadoop.registry.dns.domain-name"));
-      fw.append("export TF_CONFIG=\"" + tfConfigEnv + "\"\n");
-    }
-
-    // Print launch command
-    if (taskType.equals(TaskType.WORKER) || taskType.equals(
-        TaskType.PRIMARY_WORKER)) {
-      fw.append(parameters.getWorkerLaunchCmd() + '\n');
-
-      if (SubmarineLogs.isVerbose()) {
-        LOG.info("Worker command =[" + parameters.getWorkerLaunchCmd() + "]");
-      }
-    } else if (taskType.equals(TaskType.PS)) {
-      fw.append(parameters.getPSLaunchCmd() + '\n');
-
-      if (SubmarineLogs.isVerbose()) {
-        LOG.info("PS command =[" + parameters.getPSLaunchCmd() + "]");
-      }
-    }
-
-    fw.close();
     return file.getAbsolutePath();
   }
 
@@ -317,6 +331,8 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
         destScriptFileName, component);
 
     component.setLaunchCommand("./" + destScriptFileName);
+    componentToLocalLaunchScriptPath.put(taskType.getComponentName(),
+        localScriptFile);
   }
 
   private void addWorkerComponent(Service service,
@@ -407,6 +423,7 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
 
   private Service createServiceByParameters(RunJobParameters parameters)
       throws IOException {
+    componentToLocalLaunchScriptPath.clear();
     Service service = new Service();
     service.setName(parameters.getName());
     service.setVersion(String.valueOf(System.currentTimeMillis()));
@@ -414,7 +431,9 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
 
     handleServiceEnvs(service, parameters);
 
-    addWorkerComponents(service, parameters);
+    if (parameters.getNumWorkers() > 0) {
+      addWorkerComponents(service, parameters);
+    }
 
     if (parameters.getNumPS() > 0) {
       Component psComponent = new Component();
@@ -433,6 +452,31 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
       handleLaunchCommand(parameters, TaskType.PS, psComponent);
       service.addComponent(psComponent);
     }
+
+    if (parameters.isTensorboardEnabled()) {
+      Component tbComponent = new Component();
+      tbComponent.setName(TaskType.TENSORBOARD.getComponentName());
+      addCommonEnvironments(tbComponent, TaskType.TENSORBOARD);
+      tbComponent.setNumberOfContainers(1L);
+      tbComponent.setRestartPolicy(Component.RestartPolicyEnum.NEVER);
+      tbComponent.setResource(getServiceResourceFromYarnResource(
+          parameters.getTensorboardResource()));
+      if (parameters.getTensorboardDockerImage() != null) {
+        tbComponent.setArtifact(
+            getDockerArtifact(parameters.getTensorboardDockerImage()));
+      }
+
+      handleLaunchCommand(parameters, TaskType.TENSORBOARD, tbComponent);
+
+      // Add tensorboard to quicklink
+      String tensorboardLink = "http://" + YarnServiceUtils.getDNSName(
+          parameters.getName(), TaskType.TENSORBOARD.getComponentName(), 0,
+          getUserName(), getDNSDomain(), 6006);
+      LOG.info("Link to tensorboard:" + tensorboardLink);
+      service.addComponent(tbComponent);
+      service.setQuicklinks(ImmutableMap.of("Tensorboard", tensorboardLink));
+    }
+
     return service;
   }
 
@@ -454,5 +498,10 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
   @VisibleForTesting
   public Service getServiceSpec() {
     return serviceSpec;
+  }
+
+  @VisibleForTesting
+  public Map<String, String> getComponentToLocalLaunchScriptPath() {
+    return componentToLocalLaunchScriptPath;
   }
 }

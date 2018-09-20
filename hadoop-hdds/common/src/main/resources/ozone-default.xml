@@ -95,15 +95,6 @@
     </description>
   </property>
   <property>
-    <name>dfs.container.grpc.enabled</name>
-    <value>false</value>
-    <tag>OZONE, MANAGEMENT, PIPELINE, RATIS</tag>
-    <description>Ozone supports different kinds of replication pipelines
-      protocols. grpc is one of the replication pipeline protocol supported by
-      ozone.
-    </description>
-  </property>
-  <property>
     <name>dfs.container.ratis.ipc</name>
     <value>9858</value>
     <tag>OZONE, CONTAINER, PIPELINE, RATIS, MANAGEMENT</tag>
@@ -136,6 +127,15 @@
     </description>
   </property>
   <property>
+    <name>dfs.container.ratis.replication.level</name>
+    <value>MAJORITY</value>
+    <tag>OZONE, RATIS</tag>
+    <description>Replication level to be used by datanode for submitting a
+      container command to ratis. Available replication levels are ALL and
+      MAJORTIY, MAJORITY is used as the default replication level.
+    </description>
+  </property>
+  <property>
     <name>dfs.container.ratis.segment.size</name>
     <value>1073741824</value>
     <tag>OZONE, RATIS, PERFORMANCE</tag>
@@ -158,10 +158,46 @@
     <description>The timeout duration for ratis client request.</description>
   </property>
   <property>
+    <name>dfs.ratis.client.request.max.retries</name>
+    <value>180</value>
+    <tag>OZONE, RATIS, MANAGEMENT</tag>
+    <description>Number of retries for ratis client request.</description>
+  </property>
+  <property>
+    <name>dfs.ratis.client.request.retry.interval</name>
+    <value>100ms</value>
+    <tag>OZONE, RATIS, MANAGEMENT</tag>
+    <description>Interval between successive retries for a ratis client request.
+    </description>
+  </property>
+  <property>
+    <name>dfs.ratis.server.retry-cache.timeout.duration</name>
+    <value>600000ms</value>
+    <tag>OZONE, RATIS, MANAGEMENT</tag>
+    <description>Retry Cache entry timeout for ratis server.</description>
+  </property>
+  <property>
     <name>dfs.ratis.server.request.timeout.duration</name>
     <value>3s</value>
     <tag>OZONE, RATIS, MANAGEMENT</tag>
     <description>The timeout duration for ratis server request.</description>
+  </property>
+  <property>
+    <name>dfs.ratis.leader.election.minimum.timeout.duration</name>
+    <value>1s</value>
+    <tag>OZONE, RATIS, MANAGEMENT</tag>
+    <description>The minimum timeout duration for ratis leader election.
+        Default is 1s.
+    </description>
+  </property>
+  <property>
+    <name>dfs.ratis.server.failure.duration</name>
+    <value>120s</value>
+    <tag>OZONE, RATIS, MANAGEMENT</tag>
+    <description>The timeout duration for ratis server failure detection,
+      once the threshold has reached, the ratis state machine will be informed
+      about the failure in the ratis ring
+    </description>
   </property>
   <property>
     <name>hdds.node.report.interval</name>
@@ -187,6 +223,14 @@
       execution. Each datanode periodically the execution status of commands
       received from SCM to SCM. Unit could be defined with postfix
       (ns,ms,s,m,h,d)</description>
+  </property>
+  <property>
+    <name>hdds.pipeline.report.interval</name>
+    <value>60000ms</value>
+    <tag>OZONE, PIPELINE, MANAGEMENT</tag>
+    <description>Time interval of the datanode to send pipeline report. Each
+      datanode periodically send pipeline report to SCM. Unit could be
+      defined with postfix (ns,ms,s,m,h,d)</description>
   </property>
   <!--Ozone Settings-->
   <property>
@@ -253,6 +297,22 @@
     </description>
   </property>
   <property>
+    <name>ozone.client.max.retries</name>
+    <value>50</value>
+    <tag>OZONE, CLIENT</tag>
+    <description>Maximum number of retries by Ozone Client on encountering
+      exception while fetching committed block length.
+    </description>
+  </property>
+  <property>
+    <name>ozone.client.retry.interval</name>
+    <value>200ms</value>
+    <tag>OZONE, CLIENT</tag>
+    <description>Interval between retries by Ozone Client on encountering
+      exception while fetching committed block length.
+    </description>
+  </property>
+  <property>
     <name>ozone.client.protocol</name>
     <value>org.apache.hadoop.ozone.client.rpc.RpcClient</value>
     <tag>OZONE, CLIENT, MANAGEMENT</tag>
@@ -284,17 +344,6 @@
       the cluster.
 
       Please note: By default ozone is disabled on a hadoop cluster.
-    </description>
-  </property>
-  <property>
-    <name>ozone.handler.type</name>
-    <value>distributed</value>
-    <tag>OZONE, REST</tag>
-    <description>
-      Tells ozone which storage handler to use. The possible values are:
-      distributed - The Ozone distributed storage handler, which speaks to
-      OM/SCM on the backend and provides REST services to clients.
-      local - Local Storage handler strictly for testing - To be removed.
     </description>
   </property>
   <property>
@@ -423,16 +472,6 @@
     <tag>OM, SECURITY</tag>
     <description>
       Default user permissions used in OM.
-    </description>
-  </property>
-  <property>
-    <name>ozone.localstorage.root</name>
-    <value>${hadoop.tmp.dir}/ozone</value>
-    <tag>OZONE, DEBUG</tag>
-    <description>
-      This is used only for testing purposes. This value is used by the local
-      storage handler to simulate a REST backend. This is useful only when
-      debugging the REST front end independent of OM and SCM. To be removed.
     </description>
   </property>
   <property>
@@ -611,12 +650,11 @@
     </description>
   </property>
   <property>
-    <name>ozone.scm.container.size.gb</name>
-    <value>5</value>
+    <name>ozone.scm.container.size</name>
+    <value>5GB</value>
     <tag>OZONE, PERFORMANCE, MANAGEMENT</tag>
     <description>
-      Default container size used by Ozone. This value is specified
-      in GB.
+      Default container size used by Ozone.
       There are two considerations while picking this number. The speed at which
       a container can be replicated, determined by the network speed and the
       metadata that each container generates. So selecting a large number
@@ -945,9 +983,9 @@
     </description>
   </property>
   <property>
-    <name>ozone.scm.container.close.threshold</name>
+    <name>hdds.container.close.threshold</name>
     <value>0.9f</value>
-    <tag>OZONE, SCM</tag>
+    <tag>OZONE, DATANODE</tag>
     <description>
       This determines the threshold to be used for closing a container.
       When the container used percentage reaches this threshold,
@@ -1110,6 +1148,23 @@
   </property>
 
   <property>
+    <name>hdds.scm.chillmode.threshold.pct</name>
+    <value>0.99</value>
+    <tag>HDDS,SCM,OPERATION</tag>
+    <description> % of containers which should have at least one
+      reported replica before SCM comes out of chill mode.
+    </description>
+  </property>
+
+  <property>
+    <name>hdds.scm.chillmode.enabled</name>
+    <value>true</value>
+    <tag>HDDS,SCM,OPERATION</tag>
+    <description>Boolean value to enable or disable SCM chill mode.
+    </description>
+  </property>
+
+  <property>
     <name>hdds.container.action.max.limit</name>
     <value>20</value>
     <tag>DATANODE</tag>
@@ -1120,6 +1175,15 @@
   </property>
 
   <property>
+    <name>hdds.pipeline.action.max.limit</name>
+    <value>20</value>
+    <tag>DATANODE</tag>
+    <description>
+      Maximum number of Pipeline Actions sent by the datanode to SCM in a
+      single heartbeat.
+    </description>
+  </property>
+  <property>
     <name>hdds.scm.watcher.timeout</name>
     <value>10m</value>
     <tag>OZONE, SCM, MANAGEMENT</tag>
@@ -1129,4 +1193,33 @@
       datanode unless the datanode confirms the completion.
     </description>
   </property>
+
+  <property>
+    <name>hdds.db.profile</name>
+    <value>SSD</value>
+    <tag>OZONE, OM, PERFORMANCE, REQUIRED</tag>
+    <description>This property allows user to pick a configuration
+    that tunes the RocksDB settings for the hardware it is running
+    on. Right now, we have SSD and DISK as profile options.</description>
+  </property>
+
+  <property>
+    <name>hdds.datanode.replication.work.dir</name>
+    <tag>DATANODE</tag>
+    <description>Temporary which is used during the container replication
+      betweeen datanodes. Should have enough space to store multiple container
+      (in compressed format), but doesn't require fast io access such as SSD.
+    </description>
+  </property>
+
+  <property>
+    <name>hdds.lock.max.concurrency</name>
+    <value>100</value>
+    <tag>HDDS</tag>
+    <description>Locks in HDDS/Ozone uses object pool to maintain active locks
+      in the system, this property defines the max limit for the locks that
+      will be maintained in the pool.
+    </description>
+  </property>
+
 </configuration>

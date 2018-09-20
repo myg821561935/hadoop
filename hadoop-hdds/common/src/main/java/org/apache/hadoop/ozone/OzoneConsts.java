@@ -90,10 +90,10 @@ public final class OzoneConsts {
    * level DB names used by SCM and data nodes.
    */
   public static final String CONTAINER_DB_SUFFIX = "container.db";
+  public static final String PIPELINE_DB_SUFFIX = "pipeline.db";
   public static final String SCM_CONTAINER_DB = "scm-" + CONTAINER_DB_SUFFIX;
+  public static final String SCM_PIPELINE_DB = "scm-" + PIPELINE_DB_SUFFIX;
   public static final String DN_CONTAINER_DB = "-dn-"+ CONTAINER_DB_SUFFIX;
-  public static final String BLOCK_DB = "block.db";
-  public static final String OPEN_CONTAINERS_DB = "openContainers.db";
   public static final String DELETED_BLOCK_DB = "deletedBlock.db";
   public static final String OM_DB_NAME = "om.db";
 
@@ -110,17 +110,9 @@ public final class OzoneConsts {
     }
   }
 
-  /**
-   * Ozone handler types.
-   */
-  public static final String OZONE_HANDLER_DISTRIBUTED = "distributed";
-  public static final String OZONE_HANDLER_LOCAL = "local";
-
   public static final String DELETING_KEY_PREFIX = "#deleting#";
   public static final String DELETED_KEY_PREFIX = "#deleted#";
   public static final String DELETE_TRANSACTION_KEY_PREFIX = "#delTX#";
-  public static final String OPEN_KEY_PREFIX = "#open#";
-  public static final String OPEN_KEY_ID_DELIMINATOR = "#";
 
   /**
    * OM LevelDB prefixes.
@@ -144,8 +136,7 @@ public final class OzoneConsts {
    *  | #deleting#/volumeName/bucketName/keyName |  KeyInfo    |
    *  ----------------------------------------------------------
    */
-  public static final String OM_VOLUME_PREFIX = "/#";
-  public static final String OM_BUCKET_PREFIX = "/#";
+
   public static final String OM_KEY_PREFIX = "/";
   public static final String OM_USER_PREFIX = "$";
 
@@ -185,9 +176,41 @@ public final class OzoneConsts {
   public static final String CONTAINER_TYPE = "containerType";
   public static final String STATE = "state";
   public static final String METADATA = "metadata";
-  public static final String MAX_SIZE_GB = "maxSizeGB";
+  public static final String MAX_SIZE = "maxSize";
   public static final String METADATA_PATH = "metadataPath";
   public static final String CHUNKS_PATH = "chunksPath";
   public static final String CONTAINER_DB_TYPE = "containerDBType";
   public static final String CHECKSUM = "checksum";
+
+  // For OM Audit usage
+  public static final String VOLUME = "volume";
+  public static final String BUCKET = "bucket";
+  public static final String KEY = "key";
+  public static final String QUOTA = "quota";
+  public static final String QUOTA_IN_BYTES = "quotaInBytes";
+  public static final String CLIENT_ID = "clientID";
+  public static final String OWNER = "owner";
+  public static final String ADMIN = "admin";
+  public static final String USERNAME = "username";
+  public static final String PREV_KEY = "prevKey";
+  public static final String START_KEY = "startKey";
+  public static final String MAX_KEYS = "maxKeys";
+  public static final String PREFIX = "prefix";
+  public static final String KEY_PREFIX = "keyPrefix";
+  public static final String ACLS = "acls";
+  public static final String USER_ACL = "userAcl";
+  public static final String ADD_ACLS = "addAcls";
+  public static final String REMOVE_ACLS = "removeAcls";
+  public static final String MAX_NUM_OF_BUCKETS = "maxNumOfBuckets";
+  public static final String TO_KEY_NAME = "toKeyName";
+  public static final String STORAGE_TYPE = "storageType";
+  public static final String IS_VERSION_ENABLED = "isVersionEnabled";
+  public static final String CREATION_TIME = "creationTime";
+  public static final String DATA_SIZE = "dataSize";
+  public static final String REPLICATION_TYPE = "replicationType";
+  public static final String REPLICATION_FACTOR = "replicationFactor";
+  public static final String KEY_LOCATION_INFO = "keyLocationInfo";
+
+
+
 }

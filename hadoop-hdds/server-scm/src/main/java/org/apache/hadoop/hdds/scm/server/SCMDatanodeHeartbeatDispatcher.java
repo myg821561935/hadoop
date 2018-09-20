@@ -20,6 +20,10 @@ package org.apache.hadoop.hdds.scm.server;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.proto
+        .StorageContainerDatanodeProtocolProtos.PipelineReportsProto;
+import org.apache.hadoop.hdds.protocol.proto
+    .StorageContainerDatanodeProtocolProtos.PipelineActionsProto;
+import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerActionsProto;
 import org.apache.hadoop.hdds.protocol.proto.
     StorageContainerDatanodeProtocolProtos.CommandStatusReportsProto;
@@ -43,6 +47,9 @@ import static org.apache.hadoop.hdds.scm.events.SCMEvents.CONTAINER_ACTIONS;
 import static org.apache.hadoop.hdds.scm.events.SCMEvents.CONTAINER_REPORT;
 import static org.apache.hadoop.hdds.scm.events.SCMEvents.NODE_REPORT;
 import static org.apache.hadoop.hdds.scm.events.SCMEvents.CMD_STATUS_REPORT;
+import static org.apache.hadoop.hdds.scm.events.SCMEvents.PIPELINE_ACTIONS;
+import static org.apache.hadoop.hdds.scm.events.SCMEvents.PIPELINE_REPORT;
+
 /**
  * This class is responsible for dispatching heartbeat from datanode to
  * appropriate EventHandler at SCM.
@@ -97,6 +104,21 @@ public final class SCMDatanodeHeartbeatDispatcher {
       eventPublisher.fireEvent(CONTAINER_ACTIONS,
           new ContainerActionsFromDatanode(datanodeDetails,
               heartbeat.getContainerActions()));
+    }
+
+    if (heartbeat.hasPipelineReports()) {
+      LOG.debug("Dispatching Pipeline Report.");
+      eventPublisher.fireEvent(PIPELINE_REPORT,
+              new PipelineReportFromDatanode(datanodeDetails,
+                      heartbeat.getPipelineReports()));
+
+    }
+
+    if (heartbeat.hasPipelineActions()) {
+      LOG.debug("Dispatching Pipeline Actions.");
+      eventPublisher.fireEvent(PIPELINE_ACTIONS,
+          new PipelineActionsFromDatanode(datanodeDetails,
+              heartbeat.getPipelineActions()));
     }
 
     if (heartbeat.hasCommandStatusReport()) {
@@ -163,6 +185,30 @@ public final class SCMDatanodeHeartbeatDispatcher {
 
     public ContainerActionsFromDatanode(DatanodeDetails datanodeDetails,
                                        ContainerActionsProto actions) {
+      super(datanodeDetails, actions);
+    }
+  }
+
+  /**
+   * Pipeline report event payload with origin.
+   */
+  public static class PipelineReportFromDatanode
+          extends ReportFromDatanode<PipelineReportsProto> {
+
+    public PipelineReportFromDatanode(DatanodeDetails datanodeDetails,
+                                      PipelineReportsProto report) {
+      super(datanodeDetails, report);
+    }
+  }
+
+  /**
+   * Pipeline action event payload with origin.
+   */
+  public static class PipelineActionsFromDatanode
+      extends ReportFromDatanode<PipelineActionsProto> {
+
+    public PipelineActionsFromDatanode(DatanodeDetails datanodeDetails,
+        PipelineActionsProto actions) {
       super(datanodeDetails, actions);
     }
   }

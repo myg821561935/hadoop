@@ -21,15 +21,11 @@ package org.apache.hadoop.ozone.container.common.impl;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
-import org.apache.hadoop.conf.StorageUnit;
+import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.HddsUtils;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
-import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
-import org.apache.hadoop.hdds.protocol.proto
-    .StorageContainerDatanodeProtocolProtos.ContainerInfo;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerAction;
-import org.apache.hadoop.hdds.scm.ScmConfigKeys;
 import org.apache.hadoop.hdds.scm.container.common.helpers.StorageContainerException;
 import org.apache.hadoop.ozone.container.common.helpers.ContainerMetrics;
 import org.apache.hadoop.ozone.container.common.helpers.ContainerUtils;
@@ -88,8 +84,8 @@ public class HddsDispatcher implements ContainerDispatcher {
               containerType, conf, containerSet, volumeSet, metrics));
     }
     this.containerCloseThreshold = conf.getFloat(
-        ScmConfigKeys.OZONE_SCM_CONTAINER_CLOSE_THRESHOLD,
-        ScmConfigKeys.OZONE_SCM_CONTAINER_CLOSE_THRESHOLD_DEFAULT);
+        HddsConfigKeys.HDDS_CONTAINER_CLOSE_THRESHOLD,
+        HddsConfigKeys.HDDS_CONTAINER_CLOSE_THRESHOLD_DEFAULT);
 
   }
 
@@ -166,7 +162,7 @@ public class HddsDispatcher implements ContainerDispatcher {
     if (isOpen) {
       ContainerData containerData = container.getContainerData();
       double containerUsedPercentage = 1.0f * containerData.getBytesUsed() /
-          StorageUnit.GB.toBytes(containerData.getMaxSizeGB());
+          containerData.getMaxSize();
       if (containerUsedPercentage >= containerCloseThreshold) {
         ContainerAction action = ContainerAction.newBuilder()
             .setContainerID(containerData.getContainerID())

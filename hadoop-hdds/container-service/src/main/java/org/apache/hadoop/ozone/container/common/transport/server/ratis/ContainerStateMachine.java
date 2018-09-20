@@ -21,6 +21,7 @@ package org.apache.hadoop.ozone.container.common.transport.server.ratis;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.hdds.HddsUtils;
+import org.apache.ratis.protocol.RaftGroup;
 import org.apache.ratis.protocol.RaftGroupId;
 import org.apache.ratis.server.RaftServer;
 import org.apache.ratis.shaded.com.google.protobuf
@@ -42,6 +43,7 @@ import org.apache.ratis.protocol.Message;
 import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.server.storage.RaftStorage;
 import org.apache.ratis.shaded.com.google.protobuf.ByteString;
+import org.apache.ratis.shaded.proto.RaftProtos.RoleInfoProto;
 import org.apache.ratis.shaded.proto.RaftProtos.LogEntryProto;
 import org.apache.ratis.shaded.proto.RaftProtos.SMLogEntryProto;
 import org.apache.ratis.statemachine.StateMachineStorage;
@@ -59,6 +61,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.stream.Collectors;
 
 /** A {@link org.apache.ratis.statemachine.StateMachine} for containers.
  *
@@ -114,21 +117,32 @@ public class ContainerStateMachine extends BaseStateMachine {
       = new SimpleStateMachineStorage();
   private final ContainerDispatcher dispatcher;
   private ThreadPoolExecutor chunkExecutor;
+  private final XceiverServerRatis ratisServer;
   private final ConcurrentHashMap<Long, CompletableFuture<Message>>
       writeChunkFutureMap;
   private final ConcurrentHashMap<Long, StateMachineHelper> stateMachineMap;
+  /**
+   * CSM metrics.
+   */
+  private final CSMMetrics metrics;
 
   public ContainerStateMachine(ContainerDispatcher dispatcher,
-      ThreadPoolExecutor chunkExecutor) {
+      ThreadPoolExecutor chunkExecutor, XceiverServerRatis ratisServer) {
     this.dispatcher = dispatcher;
     this.chunkExecutor = chunkExecutor;
+    this.ratisServer = ratisServer;
     this.writeChunkFutureMap = new ConcurrentHashMap<>();
     this.stateMachineMap = new ConcurrentHashMap<>();
+    metrics = CSMMetrics.create();
   }
 
   @Override
   public StateMachineStorage getStateMachineStorage() {
     return storage;
+  }
+
+  public CSMMetrics getMetrics() {
+    return metrics;
   }
 
   @Override
@@ -220,6 +234,7 @@ public class ContainerStateMachine extends BaseStateMachine {
   @Override
   public CompletableFuture<Message> writeStateMachineData(LogEntryProto entry) {
     try {
+      metrics.incNumWriteStateMachineOps();
       final ContainerCommandRequestProto requestProto =
           getRequestProto(entry.getSmLogEntry().getStateMachineData());
       Type cmdType = requestProto.getCmdType();
@@ -235,6 +250,7 @@ public class ContainerStateMachine extends BaseStateMachine {
       }
       return stateMachineFuture;
     } catch (IOException e) {
+      metrics.incNumWriteStateMachineFails();
       return completeExceptionally(e);
     }
   }
@@ -242,15 +258,17 @@ public class ContainerStateMachine extends BaseStateMachine {
   @Override
   public CompletableFuture<Message> query(Message request) {
     try {
+      metrics.incNumReadStateMachineOps();
       final ContainerCommandRequestProto requestProto =
           getRequestProto(request.getContent());
       return CompletableFuture.completedFuture(runCommand(requestProto));
     } catch (IOException e) {
+      metrics.incNumReadStateMachineFails();
       return completeExceptionally(e);
     }
   }
 
-  private LogEntryProto readStateMachineData(SMLogEntryProto smLogEntryProto,
+  private LogEntryProto readStateMachineData(LogEntryProto entry,
       ContainerCommandRequestProto requestProto) {
     WriteChunkRequestProto writeChunkRequestProto =
         requestProto.getWriteChunk();
@@ -289,20 +307,37 @@ public class ContainerStateMachine extends BaseStateMachine {
         ContainerCommandRequestProto.newBuilder(requestProto)
             .setWriteChunk(dataWriteChunkProto);
 
-    return recreateLogEntryProto(smLogEntryProto,
+    return recreateLogEntryProto(entry,
         newStateMachineProto.build().toByteString());
   }
 
-  private LogEntryProto recreateLogEntryProto(SMLogEntryProto smLogEntryProto,
+  private LogEntryProto recreateLogEntryProto(LogEntryProto entry,
       ByteString stateMachineData) {
     // recreate the log entry
     final SMLogEntryProto log =
-        SMLogEntryProto.newBuilder(smLogEntryProto)
+        SMLogEntryProto.newBuilder(entry.getSmLogEntry())
             .setStateMachineData(stateMachineData)
             .build();
-    return LogEntryProto.newBuilder().setSmLogEntry(log).build();
+    return LogEntryProto.newBuilder(entry).setSmLogEntry(log).build();
   }
 
+  /**
+   * Returns the combined future of all the writeChunks till the given log
+   * index. The Raft log worker will wait for the stateMachineData to complete
+   * flush as well.
+   *
+   * @param index log index till which the stateMachine data needs to be flushed
+   * @return Combined future of all writeChunks till the log index given.
+   */
+  @Override
+  public CompletableFuture<Void> flushStateMachineData(long index) {
+    List<CompletableFuture<Message>> futureList =
+        writeChunkFutureMap.entrySet().stream().filter(x -> x.getKey() <= index)
+            .map(x -> x.getValue()).collect(Collectors.toList());
+    CompletableFuture<Void> combinedFuture = CompletableFuture.allOf(
+        futureList.toArray(new CompletableFuture[futureList.size()]));
+    return combinedFuture;
+  }
   /*
    * This api is used by the leader while appending logs to the follower
    * This allows the leader to read the state machine data from the
@@ -325,11 +360,11 @@ public class ContainerStateMachine extends BaseStateMachine {
 
       if (requestProto.getCmdType() == Type.WriteChunk) {
         return CompletableFuture.supplyAsync(() ->
-                readStateMachineData(smLogEntryProto, requestProto),
+                readStateMachineData(entry, requestProto),
             chunkExecutor);
       } else if (requestProto.getCmdType() == Type.CreateContainer) {
         LogEntryProto log =
-            recreateLogEntryProto(smLogEntryProto, requestProto.toByteString());
+            recreateLogEntryProto(entry, requestProto.toByteString());
         return CompletableFuture.completedFuture(log);
       } else {
         throw new IllegalStateException("Cmd type:" + requestProto.getCmdType()
@@ -347,6 +382,7 @@ public class ContainerStateMachine extends BaseStateMachine {
   @Override
   public CompletableFuture<Message> applyTransaction(TransactionContext trx) {
     try {
+      metrics.incNumApplyTransactionsOps();
       ContainerCommandRequestProto requestProto =
           getRequestProto(trx.getSMLogEntry().getData());
       Preconditions.checkState(!HddsUtils.isReadOnly(requestProto));
@@ -357,6 +393,7 @@ public class ContainerStateMachine extends BaseStateMachine {
       return stateMachineMap.get(requestProto.getContainerID())
           .executeContainerCommand(requestProto, index);
     } catch (IOException e) {
+      metrics.incNumApplyTransactionsFails();
       return completeExceptionally(e);
     }
   }
@@ -365,6 +402,17 @@ public class ContainerStateMachine extends BaseStateMachine {
     final CompletableFuture<T> future = new CompletableFuture<>();
     future.completeExceptionally(e);
     return future;
+  }
+
+  @Override
+  public void notifySlowness(RaftGroup group, RoleInfoProto roleInfoProto) {
+    ratisServer.handleNodeSlowness(group, roleInfoProto);
+  }
+
+  @Override
+  public void notifyExtendedNoLeader(RaftGroup group,
+      RoleInfoProto roleInfoProto) {
+    ratisServer.handleNoLeader(group, roleInfoProto);
   }
 
   @Override

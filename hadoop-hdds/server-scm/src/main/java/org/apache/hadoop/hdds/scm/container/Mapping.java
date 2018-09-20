@@ -25,6 +25,7 @@ import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerInfo;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerReportsProto;
+import org.apache.hadoop.hdds.scm.pipelines.PipelineSelector;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -115,7 +116,7 @@ public interface Mapping extends Closeable {
    * @param reports Container report
    */
   void processContainerReports(DatanodeDetails datanodeDetails,
-                               ContainerReportsProto reports)
+      ContainerReportsProto reports, boolean isRegisterCall)
       throws IOException;
 
   /**
@@ -135,4 +136,6 @@ public interface Mapping extends Closeable {
   ContainerWithPipeline getMatchingContainerWithPipeline(long size,
       String owner, ReplicationType type, ReplicationFactor factor,
       LifeCycleState state) throws IOException;
+
+  PipelineSelector getPipelineSelector();
 }

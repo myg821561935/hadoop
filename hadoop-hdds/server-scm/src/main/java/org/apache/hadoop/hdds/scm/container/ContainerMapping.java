@@ -20,18 +20,20 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.primitives.Longs;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
+import org.apache.hadoop.hdds.protocol.proto.HddsProtos.LifeCycleEvent;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.LifeCycleState;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.SCMContainerInfo;
 import org.apache.hadoop.hdds.scm.block.PendingDeleteStatusList;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
 import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
-import org.apache.hadoop.hdds.scm.container.closer.ContainerCloser;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerInfo;
 import org.apache.hadoop.hdds.scm.container.common.helpers.PipelineID;
 import org.apache.hadoop.hdds.scm.events.SCMEvents;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException;
+import org.apache.hadoop.hdds.scm.exceptions.SCMException.ResultCodes;
 import org.apache.hadoop.hdds.scm.node.NodeManager;
 import org.apache.hadoop.hdds.scm.pipelines.PipelineSelector;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
@@ -66,7 +68,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import static org.apache.hadoop.hdds.scm.ScmConfigKeys
     .OZONE_SCM_CONTAINER_SIZE_DEFAULT;
 import static org.apache.hadoop.hdds.scm.ScmConfigKeys
-    .OZONE_SCM_CONTAINER_SIZE_GB;
+    .OZONE_SCM_CONTAINER_SIZE;
 import static org.apache.hadoop.hdds.scm.exceptions.SCMException.ResultCodes
     .FAILED_TO_CHANGE_CONTAINER_STATE;
 import static org.apache.hadoop.hdds.server.ServerUtils.getOzoneMetaDirPath;
@@ -89,8 +91,6 @@ public class ContainerMapping implements Mapping {
   private final PipelineSelector pipelineSelector;
   private final ContainerStateManager containerStateManager;
   private final LeaseManager<ContainerInfo> containerLeaseManager;
-  private final float containerCloseThreshold;
-  private final ContainerCloser closer;
   private final EventPublisher eventPublisher;
   private final long size;
 
@@ -114,7 +114,6 @@ public class ContainerMapping implements Mapping {
       cacheSizeMB, EventPublisher eventPublisher) throws IOException {
     this.nodeManager = nodeManager;
     this.cacheSize = cacheSizeMB;
-    this.closer = new ContainerCloser(nodeManager, conf);
 
     File metaDir = getOzoneMetaDirPath(conf);
 
@@ -129,19 +128,16 @@ public class ContainerMapping implements Mapping {
 
     this.lock = new ReentrantLock();
 
-    // To be replaced with code getStorageSize once it is committed.
-    size = conf.getLong(OZONE_SCM_CONTAINER_SIZE_GB,
-        OZONE_SCM_CONTAINER_SIZE_DEFAULT) * 1024 * 1024 * 1024;
-    this.containerStateManager =
-        new ContainerStateManager(conf, this);
-    LOG.trace("Container State Manager created.");
+    size = (long)conf.getStorageSize(OZONE_SCM_CONTAINER_SIZE,
+        OZONE_SCM_CONTAINER_SIZE_DEFAULT, StorageUnit.BYTES);
 
     this.pipelineSelector = new PipelineSelector(nodeManager,
-        containerStateManager, conf, eventPublisher);
+            conf, eventPublisher, cacheSizeMB);
 
-    this.containerCloseThreshold = conf.getFloat(
-        ScmConfigKeys.OZONE_SCM_CONTAINER_CLOSE_THRESHOLD,
-        ScmConfigKeys.OZONE_SCM_CONTAINER_CLOSE_THRESHOLD_DEFAULT);
+    this.containerStateManager =
+        new ContainerStateManager(conf, this, pipelineSelector);
+    LOG.trace("Container State Manager created.");
+
     this.eventPublisher = eventPublisher;
 
     long containerCreationLeaseTimeout = conf.getTimeDuration(
@@ -206,17 +202,15 @@ public class ContainerMapping implements Mapping {
       Pipeline pipeline;
       if (contInfo.isContainerOpen()) {
         // If pipeline with given pipeline Id already exist return it
-        pipeline = pipelineSelector.getPipeline(contInfo.getPipelineID(),
-            contInfo.getReplicationType());
-        if (pipeline == null) {
-          pipeline = pipelineSelector
-              .getReplicationPipeline(contInfo.getReplicationType(),
-                  contInfo.getReplicationFactor());
-        }
+        pipeline = pipelineSelector.getPipeline(contInfo.getPipelineID());
       } else {
         // For close containers create pipeline from datanodes with replicas
         Set<DatanodeDetails> dnWithReplicas = containerStateManager
             .getContainerReplicas(contInfo.containerID());
+        if (dnWithReplicas.size() == 0) {
+          throw new SCMException("Can't create a pipeline for container with "
+              + "no replica.", ResultCodes.NO_REPLICA_FOUND);
+        }
         pipeline =
             new Pipeline(dnWithReplicas.iterator().next().getUuidString(),
                 contInfo.getState(), ReplicationType.STAND_ALONE,
@@ -279,12 +273,6 @@ public class ContainerMapping implements Mapping {
 
     ContainerInfo containerInfo;
     ContainerWithPipeline containerWithPipeline;
-
-    if (!nodeManager.isOutOfChillMode()) {
-      throw new SCMException(
-          "Unable to create container while in chill mode",
-          SCMException.ResultCodes.CHILL_MODE_EXCEPTION);
-    }
 
     lock.lock();
     try {
@@ -394,10 +382,8 @@ public class ContainerMapping implements Mapping {
       ContainerInfo updatedContainer = containerStateManager
           .updateContainerState(containerInfo, event);
       if (!updatedContainer.isContainerOpen()) {
-        Pipeline pipeline = pipelineSelector
-            .getPipeline(containerInfo.getPipelineID(),
-                containerInfo.getReplicationType());
-        pipelineSelector.closePipelineIfNoOpenContainers(pipeline);
+        pipelineSelector.removeContainerFromPipeline(
+                containerInfo.getPipelineID(), containerID);
       }
       containerStore.put(dbKey, updatedContainer.getProtobuf().toByteArray());
       return updatedContainer.getState();
@@ -460,29 +446,23 @@ public class ContainerMapping implements Mapping {
   /**
    * Return a container matching the attributes specified.
    *
-   * @param size - Space needed in the Container.
+   * @param sizeRequired - Space needed in the Container.
    * @param owner - Owner of the container - A specific nameservice.
    * @param type - Replication Type {StandAlone, Ratis}
    * @param factor - Replication Factor {ONE, THREE}
    * @param state - State of the Container-- {Open, Allocated etc.}
    * @return ContainerInfo, null if there is no match found.
    */
-  public ContainerWithPipeline getMatchingContainerWithPipeline(final long size,
-      String owner, ReplicationType type, ReplicationFactor factor,
-      LifeCycleState state) throws IOException {
+  public ContainerWithPipeline getMatchingContainerWithPipeline(
+      final long sizeRequired, String owner, ReplicationType type,
+      ReplicationFactor factor, LifeCycleState state) throws IOException {
     ContainerInfo containerInfo = getStateManager()
-        .getMatchingContainer(size, owner, type, factor, state);
+        .getMatchingContainer(sizeRequired, owner, type, factor, state);
     if (containerInfo == null) {
       return null;
     }
     Pipeline pipeline = pipelineSelector
-        .getPipeline(containerInfo.getPipelineID(),
-            containerInfo.getReplicationType());
-    if (pipeline == null) {
-      pipeline = pipelineSelector
-          .getReplicationPipeline(containerInfo.getReplicationType(),
-              containerInfo.getReplicationFactor());
-    }
+        .getPipeline(containerInfo.getPipelineID());
     return new ContainerWithPipeline(containerInfo, pipeline);
   }
 
@@ -505,15 +485,26 @@ public class ContainerMapping implements Mapping {
    */
   @Override
   public void processContainerReports(DatanodeDetails datanodeDetails,
-                                      ContainerReportsProto reports)
+      ContainerReportsProto reports, boolean isRegisterCall)
       throws IOException {
     List<StorageContainerDatanodeProtocolProtos.ContainerInfo>
         containerInfos = reports.getReportsList();
     PendingDeleteStatusList pendingDeleteStatusList =
         new PendingDeleteStatusList(datanodeDetails);
-    for (StorageContainerDatanodeProtocolProtos.ContainerInfo datanodeState :
+    for (StorageContainerDatanodeProtocolProtos.ContainerInfo contInfo :
         containerInfos) {
-      byte[] dbKey = Longs.toByteArray(datanodeState.getContainerID());
+      // Update replica info during registration process.
+      if (isRegisterCall) {
+        try {
+          getStateManager().addContainerReplica(ContainerID.
+              valueof(contInfo.getContainerID()), datanodeDetails);
+        } catch (Exception ex) {
+          // Continue to next one after logging the error.
+          LOG.error("Error while adding replica for containerId {}.",
+              contInfo.getContainerID(), ex);
+        }
+      }
+      byte[] dbKey = Longs.toByteArray(contInfo.getContainerID());
       lock.lock();
       try {
         byte[] containerBytes = containerStore.get(dbKey);
@@ -521,13 +512,25 @@ public class ContainerMapping implements Mapping {
           HddsProtos.SCMContainerInfo knownState =
               HddsProtos.SCMContainerInfo.PARSER.parseFrom(containerBytes);
 
-          HddsProtos.SCMContainerInfo newState =
-              reconcileState(datanodeState, knownState, datanodeDetails);
+          if (knownState.getState() == LifeCycleState.CLOSING
+              && contInfo.getState() == LifeCycleState.CLOSED) {
 
-          if (knownState.getDeleteTransactionId() > datanodeState
+            updateContainerState(contInfo.getContainerID(),
+                LifeCycleEvent.CLOSE);
+
+            //reread the container
+            knownState =
+                HddsProtos.SCMContainerInfo.PARSER
+                    .parseFrom(containerStore.get(dbKey));
+          }
+
+          HddsProtos.SCMContainerInfo newState =
+              reconcileState(contInfo, knownState, datanodeDetails);
+
+          if (knownState.getDeleteTransactionId() > contInfo
               .getDeleteTransactionId()) {
             pendingDeleteStatusList
-                .addPendingDeleteStatus(datanodeState.getDeleteTransactionId(),
+                .addPendingDeleteStatus(contInfo.getDeleteTransactionId(),
                     knownState.getDeleteTransactionId(),
                     knownState.getContainerID());
           }
@@ -539,26 +542,12 @@ public class ContainerMapping implements Mapping {
           // the updated State.
           containerStore.put(dbKey, newState.toByteArray());
 
-          // If the container is closed, then state is already written to SCM
-          Pipeline pipeline =
-              pipelineSelector.getPipeline(
-                  PipelineID.getFromProtobuf(newState.getPipelineID()),
-                  newState.getReplicationType());
-          if(pipeline == null) {
-            pipeline = pipelineSelector
-                .getReplicationPipeline(newState.getReplicationType(),
-                    newState.getReplicationFactor());
-          }
-          // DB.TODO: So can we can write only once to DB.
-          if (closeContainerIfNeeded(newState, pipeline)) {
-            LOG.info("Closing the Container: {}", newState.getContainerID());
-          }
         } else {
           // Container not found in our container db.
           LOG.error("Error while processing container report from datanode :" +
                   " {}, for container: {}, reason: container doesn't exist in" +
                   "container database.", datanodeDetails,
-              datanodeState.getContainerID());
+              contInfo.getContainerID());
         }
       } finally {
         lock.unlock();
@@ -589,8 +578,8 @@ public class ContainerMapping implements Mapping {
         .setReplicationType(knownState.getReplicationType())
         .setReplicationFactor(knownState.getReplicationFactor());
 
-    // TODO: If current state doesn't have this DN in list of DataNodes with replica
-    // then add it in list of replicas.
+    // TODO: If current state doesn't have this DN in list of DataNodes with
+    // replica then add it in list of replicas.
 
     // If used size is greater than allocated size, we will be updating
     // allocated size with used size. This update is done as a fallback
@@ -613,52 +602,6 @@ public class ContainerMapping implements Mapping {
     return builder.build();
   }
 
-  /**
-   * Queues the close container command, to datanode and writes the new state
-   * to container DB.
-   * <p>
-   * TODO : Remove this 2 ContainerInfo definitions. It is brain dead to have
-   * one protobuf in one file and another definition in another file.
-   *
-   * @param newState - This is the state we maintain in SCM.
-   * @param pipeline
-   * @throws IOException
-   */
-  private boolean closeContainerIfNeeded(SCMContainerInfo newState,
-      Pipeline pipeline)
-      throws IOException {
-    float containerUsedPercentage = 1.0f *
-        newState.getUsedBytes() / this.size;
-
-    ContainerInfo scmInfo = getContainer(newState.getContainerID());
-    if (containerUsedPercentage >= containerCloseThreshold
-        && !isClosed(scmInfo)) {
-      // We will call closer till get to the closed state.
-      // That is SCM will make this call repeatedly until we reach the closed
-      // state.
-      closer.close(newState, pipeline);
-
-      if (shouldClose(scmInfo)) {
-        // This event moves the Container from Open to Closing State, this is
-        // a state inside SCM. This is the desired state that SCM wants this
-        // container to reach. We will know that a container has reached the
-        // closed state from container reports. This state change should be
-        // invoked once and only once.
-        HddsProtos.LifeCycleState state = updateContainerState(
-            scmInfo.getContainerID(),
-            HddsProtos.LifeCycleEvent.FINALIZE);
-        if (state != HddsProtos.LifeCycleState.CLOSING) {
-          LOG.error("Failed to close container {}, reason : Not able " +
-                  "to " +
-                  "update container state, current container state: {}.",
-              newState.getContainerID(), state);
-          return false;
-        }
-        return true;
-      }
-    }
-    return false;
-  }
 
   /**
    * In Container is in closed state, if it is in closed, Deleting or Deleted
@@ -673,11 +616,6 @@ public class ContainerMapping implements Mapping {
 
   private boolean isClosed(ContainerInfo info) {
     return info.getState() == HddsProtos.LifeCycleState.CLOSED;
-  }
-
-  @VisibleForTesting
-  public ContainerCloser getCloser() {
-    return closer;
   }
 
   /**
@@ -733,21 +671,7 @@ public class ContainerMapping implements Mapping {
         // return info of a deleted container. may revisit this in the future,
         // for now, just skip a not-found container
         if (containerBytes != null) {
-          HddsProtos.SCMContainerInfo oldInfoProto =
-              HddsProtos.SCMContainerInfo.PARSER.parseFrom(containerBytes);
-          ContainerInfo oldInfo = ContainerInfo.fromProtobuf(oldInfoProto);
-          ContainerInfo newInfo = new ContainerInfo.Builder()
-              .setAllocatedBytes(info.getAllocatedBytes())
-              .setNumberOfKeys(oldInfo.getNumberOfKeys())
-              .setOwner(oldInfo.getOwner())
-              .setPipelineID(oldInfo.getPipelineID())
-              .setState(oldInfo.getState())
-              .setUsedBytes(oldInfo.getUsedBytes())
-              .setDeleteTransactionId(oldInfo.getDeleteTransactionId())
-              .setReplicationFactor(oldInfo.getReplicationFactor())
-              .setReplicationType(oldInfo.getReplicationType())
-              .build();
-          containerStore.put(dbKey, newInfo.getProtobuf().toByteArray());
+          containerStore.put(dbKey, info.getProtobuf().toByteArray());
         } else {
           LOG.debug("Container state manager has container {} but not found " +
                   "in container store, a deleted container?",
@@ -768,7 +692,6 @@ public class ContainerMapping implements Mapping {
     return containerStore;
   }
 
-  @VisibleForTesting
   public PipelineSelector getPipelineSelector() {
     return pipelineSelector;
   }

@@ -20,13 +20,18 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <parent>
     <groupId>org.apache.hadoop</groupId>
     <artifactId>hadoop-ozone</artifactId>
-    <version>0.2.1-SNAPSHOT</version>
+    <version>0.3.0-SNAPSHOT</version>
   </parent>
   <artifactId>hadoop-ozone-docs</artifactId>
-  <version>0.2.1-SNAPSHOT</version>
+  <version>0.3.0-SNAPSHOT</version>
   <description>Apache Hadoop Ozone Documentation</description>
   <name>Apache Hadoop Ozone Documentation</name>
   <packaging>jar</packaging>
+
+  <properties>
+    <hadoop.component>ozone</hadoop.component>
+    <is.hadoop.component>true</is.hadoop.component>
+  </properties>
 
   <dependencies>
 
@@ -47,10 +52,6 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
         </executions>
         <configuration>
           <executable>dev-support/bin/generate-site.sh</executable>
-          <arguments>
-            <argument>-b</argument>
-            <argument>/docs</argument>
-          </arguments>
         </configuration>
       </plugin>
       <plugin>

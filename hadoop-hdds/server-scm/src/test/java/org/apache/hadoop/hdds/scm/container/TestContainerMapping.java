@@ -178,8 +178,8 @@ public class TestContainerMapping {
     mapping
         .updateContainerState(contInfo.getContainerID(), LifeCycleEvent.CLOSE);
     ContainerInfo finalContInfo = contInfo;
-    LambdaTestUtils.intercept(SCMException.class,"No entry exist for "
-        + "containerId:" , () -> mapping.getContainerWithPipeline(
+    LambdaTestUtils.intercept(SCMException.class, "No entry exist for "
+        + "containerId:", () -> mapping.getContainerWithPipeline(
         finalContInfo.getContainerID()));
 
     mapping.getStateManager().getContainerStateMap()
@@ -203,14 +203,6 @@ public class TestContainerMapping {
   public void testgetNoneExistentContainer() throws IOException {
     thrown.expectMessage("Specified key does not exist.");
     mapping.getContainer(random.nextLong());
-  }
-
-  @Test
-  public void testChillModeAllocateContainerFails() throws IOException {
-    nodeManager.setChillmode(true);
-    thrown.expectMessage("Unable to create container while in chill mode");
-    mapping.allocateContainer(xceiverClientManager.getType(),
-        xceiverClientManager.getFactor(), containerOwner);
   }
 
   @Test
@@ -242,7 +234,7 @@ public class TestContainerMapping {
   }
 
   @Test
-  public void testFullContainerReport() throws IOException {
+  public void testFullContainerReport() throws Exception {
     ContainerInfo info = createContainer();
     DatanodeDetails datanodeDetails = TestUtils.randomDatanodeDetails();
     List<StorageContainerDatanodeProtocolProtos.ContainerInfo> reports =
@@ -266,56 +258,72 @@ public class TestContainerMapping {
         .newBuilder();
     crBuilder.addAllReports(reports);
 
-    mapping.processContainerReports(datanodeDetails, crBuilder.build());
+    mapping.processContainerReports(datanodeDetails, crBuilder.build(), false);
 
     ContainerInfo updatedContainer =
         mapping.getContainer(info.getContainerID());
     Assert.assertEquals(100000000L,
         updatedContainer.getNumberOfKeys());
     Assert.assertEquals(2000000000L, updatedContainer.getUsedBytes());
+
+    for (StorageContainerDatanodeProtocolProtos.ContainerInfo c : reports) {
+      LambdaTestUtils.intercept(SCMException.class, "No entry "
+          + "exist for containerId:", () -> mapping.getStateManager()
+          .getContainerReplicas(ContainerID.valueof(c.getContainerID())));
+    }
+
+    mapping.processContainerReports(TestUtils.randomDatanodeDetails(),
+        crBuilder.build(), true);
+    for (StorageContainerDatanodeProtocolProtos.ContainerInfo c : reports) {
+      Assert.assertTrue(mapping.getStateManager().getContainerReplicas(
+          ContainerID.valueof(c.getContainerID())).size() > 0);
+    }
   }
 
   @Test
-  public void testContainerCloseWithContainerReport() throws IOException {
-    ContainerInfo info = createContainer();
+  public void testListContainerAfterReport() throws Exception {
+    ContainerInfo info1 = createContainer();
+    ContainerInfo info2 = createContainer();
     DatanodeDetails datanodeDetails = TestUtils.randomDatanodeDetails();
     List<StorageContainerDatanodeProtocolProtos.ContainerInfo> reports =
         new ArrayList<>();
-
     StorageContainerDatanodeProtocolProtos.ContainerInfo.Builder ciBuilder =
         StorageContainerDatanodeProtocolProtos.ContainerInfo.newBuilder();
-    ciBuilder.setFinalhash("7c45eb4d7ed5e0d2e89aaab7759de02e")
-        .setSize(5368709120L)
-        .setUsed(5368705120L)
-        .setKeyCount(500000000L)
-        .setReadCount(500000000L)
-        .setWriteCount(500000000L)
-        .setReadBytes(5368705120L)
-        .setWriteBytes(5368705120L)
-        .setContainerID(info.getContainerID())
-        .setDeleteTransactionId(0);
-
+    long cID1 = info1.getContainerID();
+    long cID2 = info2.getContainerID();
+    ciBuilder.setFinalhash("e16cc9d6024365750ed8dbd194ea46d2")
+        .setSize(1000000000L)
+        .setUsed(987654321L)
+        .setKeyCount(100000000L)
+        .setReadBytes(1000000000L)
+        .setWriteBytes(1000000000L)
+        .setContainerID(cID1);
     reports.add(ciBuilder.build());
 
-    ContainerReportsProto.Builder crBuilder =
-        ContainerReportsProto.newBuilder();
+    ciBuilder.setFinalhash("e16cc9d6024365750ed8dbd194ea54a9")
+        .setSize(1000000000L)
+        .setUsed(123456789L)
+        .setKeyCount(200000000L)
+        .setReadBytes(3000000000L)
+        .setWriteBytes(4000000000L)
+        .setContainerID(cID2);
+    reports.add(ciBuilder.build());
+
+    ContainerReportsProto.Builder crBuilder = ContainerReportsProto
+        .newBuilder();
     crBuilder.addAllReports(reports);
 
-    mapping.processContainerReports(datanodeDetails, crBuilder.build());
+    mapping.processContainerReports(datanodeDetails, crBuilder.build(), false);
 
-    ContainerInfo updatedContainer =
-        mapping.getContainer(info.getContainerID());
-    Assert.assertEquals(500000000L,
-        updatedContainer.getNumberOfKeys());
-    Assert.assertEquals(5368705120L, updatedContainer.getUsedBytes());
-    NavigableSet<ContainerID> pendingCloseContainers = mapping.getStateManager()
-        .getMatchingContainerIDs(
-            containerOwner,
-            xceiverClientManager.getType(),
-            xceiverClientManager.getFactor(),
-            HddsProtos.LifeCycleState.CLOSING);
-    Assert.assertTrue(
-         pendingCloseContainers.contains(updatedContainer.containerID()));
+    List<ContainerInfo> list = mapping.listContainer(0, 50);
+    Assert.assertEquals(2, list.stream().filter(
+        x -> x.getContainerID() == cID1 || x.getContainerID() == cID2).count());
+    Assert.assertEquals(300000000L, list.stream().filter(
+        x -> x.getContainerID() == cID1 || x.getContainerID() == cID2)
+        .mapToLong(x -> x.getNumberOfKeys()).sum());
+    Assert.assertEquals(1111111110L, list.stream().filter(
+        x -> x.getContainerID() == cID1 || x.getContainerID() == cID2)
+        .mapToLong(x -> x.getUsedBytes()).sum());
   }
 
   @Test
@@ -358,6 +366,15 @@ public class TestContainerMapping {
     mapping.updateContainerState(containerInfo.getContainerID(),
         HddsProtos.LifeCycleEvent.CREATED);
     return containerInfo;
+  }
+
+  @Test
+  public void testFlushAllContainers() throws IOException {
+    ContainerInfo info = createContainer();
+    List<ContainerInfo> containers = mapping.getStateManager()
+        .getAllContainers();
+    Assert.assertTrue(containers.size() > 0);
+    mapping.flushContainerInfo();
   }
 
 }

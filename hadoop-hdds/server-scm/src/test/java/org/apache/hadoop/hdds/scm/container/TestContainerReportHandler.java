@@ -71,12 +71,11 @@ public class TestContainerReportHandler implements EventPublisher {
 
   @Test
   public void test() throws IOException {
-
-    //given
-
+    //GIVEN
     OzoneConfiguration conf = new OzoneConfiguration();
     Node2ContainerMap node2ContainerMap = new Node2ContainerMap();
     Mapping mapping = Mockito.mock(Mapping.class);
+    PipelineSelector selector = Mockito.mock(PipelineSelector.class);
 
     when(mapping.getContainer(anyLong()))
         .thenAnswer(
@@ -84,11 +83,12 @@ public class TestContainerReportHandler implements EventPublisher {
                 new Builder()
                     .setReplicationFactor(ReplicationFactor.THREE)
                     .setContainerID((Long) invocation.getArguments()[0])
+                    .setState(LifeCycleState.CLOSED)
                     .build()
-        );
+      );
 
     ContainerStateManager containerStateManager =
-        new ContainerStateManager(conf, mapping);
+        new ContainerStateManager(conf, mapping, selector);
 
     when(mapping.getStateManager()).thenReturn(containerStateManager);
 
@@ -116,26 +116,35 @@ public class TestContainerReportHandler implements EventPublisher {
     when(pipelineSelector.getReplicationPipeline(ReplicationType.STAND_ALONE,
         ReplicationFactor.THREE)).thenReturn(pipeline);
 
-    long c1 = containerStateManager
+    ContainerInfo cont1 = containerStateManager
         .allocateContainer(pipelineSelector, ReplicationType.STAND_ALONE,
-            ReplicationFactor.THREE, "root").getContainerInfo()
-        .getContainerID();
+            ReplicationFactor.THREE, "root").getContainerInfo();
+    ContainerInfo cont2 = containerStateManager
+        .allocateContainer(pipelineSelector, ReplicationType.STAND_ALONE,
+            ReplicationFactor.THREE, "root").getContainerInfo();
+    // Open Container
+    ContainerInfo cont3 = containerStateManager
+        .allocateContainer(pipelineSelector, ReplicationType.STAND_ALONE,
+            ReplicationFactor.THREE, "root").getContainerInfo();
 
-    long c2 = containerStateManager
-        .allocateContainer(pipelineSelector, ReplicationType.STAND_ALONE,
-            ReplicationFactor.THREE, "root").getContainerInfo()
-        .getContainerID();
+    long c1 = cont1.getContainerID();
+    long c2 = cont2.getContainerID();
+    long c3 = cont3.getContainerID();
+
+    // Close remaining containers
+    TestUtils.closeContainer(containerStateManager, cont1);
+    TestUtils.closeContainer(containerStateManager, cont2);
 
     //when
 
     //initial reports before replication is enabled. 2 containers w 3 replicas.
     reportHandler.onMessage(
         new ContainerReportFromDatanode(dn1,
-            createContainerReport(new long[] {c1, c2})), this);
+            createContainerReport(new long[] {c1, c2, c3})), this);
 
     reportHandler.onMessage(
         new ContainerReportFromDatanode(dn2,
-            createContainerReport(new long[] {c1, c2})), this);
+            createContainerReport(new long[] {c1, c2, c3})), this);
 
     reportHandler.onMessage(
         new ContainerReportFromDatanode(dn3,

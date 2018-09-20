@@ -39,11 +39,11 @@ fi
 HADOOP_LIBEXEC_DIR="${HADOOP_LIBEXEC_DIR:-$HADOOP_DEFAULT_LIBEXEC_DIR}"
 # shellcheck disable=SC2034
 HADOOP_NEW_CONFIG=true
-if [[ -f "${HADOOP_LIBEXEC_DIR}/hdfs-config.sh" ]]; then
+if [[ -f "${HADOOP_LIBEXEC_DIR}/ozone-config.sh" ]]; then
   # shellcheck disable=SC1090
-  . "${HADOOP_LIBEXEC_DIR}/hdfs-config.sh"
+  . "${HADOOP_LIBEXEC_DIR}/ozone-config.sh"
 else
-  echo "ERROR: Cannot execute ${HADOOP_LIBEXEC_DIR}/hdfs-config.sh." 2>&1
+  echo "ERROR: Cannot execute ${HADOOP_LIBEXEC_DIR}/ozone-config.sh." 2>&1
   exit 1
 fi
 
@@ -64,13 +64,15 @@ if [[ "${OZONE_ENABLED}" != "true" ]]; then
 fi
 
 #---------------------------------------------------------
-# Start hdfs before starting ozone daemons
-if [[ -f "${bin}/stop-dfs.sh" ]]; then
-  "${bin}/stop-dfs.sh"
-else
-  echo "ERROR: Cannot execute ${bin}/stop-dfs.sh." 2>&1
-  exit 1
-fi
+# datanodes (using default workers file)
+
+echo "Stopping datanodes"
+
+hadoop_uservar_su ozone datanode "${HADOOP_HDFS_HOME}/bin/ozone" \
+  --workers \
+  --config "${HADOOP_CONF_DIR}" \
+  --daemon stop \
+  datanode
 
 #---------------------------------------------------------
 # Ozone Manager nodes

@@ -46,12 +46,14 @@ package org.apache.hadoop.ozone.audit;
  * **** Auditable ***
  * This is an interface to mark an entity as auditable.
  * This interface must be implemented by entities requiring audit logging.
- * For example - KSMVolumeArgs, KSMBucketArgs.
+ * For example - OMVolumeArgs, OMBucketArgs.
  * The implementing class must override toAuditMap() to return an
  * instance of Map<Key, Value> where both Key and Value are String.
  *
- * Key: must not contain any spaces. If the key is multi word then use
- * camel case.
+ * Key: must contain printable US ASCII characters
+ * May not contain a space, =, ], or "
+ * If the key is multi word then use camel case.
+ *
  * Value: if it is a collection/array, then it must be converted to a comma
  * delimited string
  *
@@ -81,6 +83,11 @@ package org.apache.hadoop.ozone.audit;
  * *** AuditMarker ***
  * Enum to define various Audit Markers used in AuditLogging.
  *
+ * *** AuditMessage ***
+ * Entity to define an audit message to be logged
+ * It will generate a message formatted as:
+ * user=xxx ip=xxx op=XXXX_XXXX {key=val, key1=val1..} ret=XXXXXX
+ *
  * ****************************************************************************
  *                              Usage
  * ****************************************************************************
@@ -88,14 +95,16 @@ package org.apache.hadoop.ozone.audit;
  * 1. Get a logger by specifying the appropriate logger type
  * Example: ExtendedLogger AUDIT = new AuditLogger(AuditLoggerType.OMLogger)
  *
- * 2. Log Read/Write and Success/Failure event as needed.
+ * 2. Construct an instance of AuditMessage
+ *
+ * 3. Log Read/Write and Success/Failure event as needed.
  * Example
- * AUDIT.logWriteSuccess(AuditAction type, Map<String, String> data, Level
- * level)
+ * AUDIT.logWriteSuccess(Level level, AuditMessage msg)
  *
  * If logging is done without specifying Level, then Level implicitly
- * defaults to INFO
- * AUDIT.logWriteSuccess(AuditAction type, Map<String, String> data)
+ * defaults to INFO for xxxxSuccess() and ERROR for xxxxFailure()
+ * AUDIT.logWriteSuccess(AuditMessage msg)
+ * AUDIT.logWriteFailure(AuditMessage msg)
  *
  * See sample invocations in src/test in the following class:
  * org.apache.hadoop.ozone.audit.TestOzoneAuditLogger
