@@ -27,6 +27,7 @@ import java.net.URI;
 import java.net.UnknownHostException;
 import java.security.PrivilegedAction;
 import java.security.PrivilegedExceptionAction;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -52,11 +53,12 @@ import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.ZKUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-//this will need to be replaced someday when there is a suitable replacement
-import sun.net.dns.ResolverConfiguration;
-import sun.net.util.IPAddressUtil;
+import org.xbill.DNS.Name;
+import org.xbill.DNS.ResolverConfig;
+
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.net.InetAddresses;
 
 /**
  * Security Utils.
@@ -584,10 +586,15 @@ public final class SecurityUtil {
    *       hadoop.security.token.service.use_ip=false 
    */
   protected static class QualifiedHostResolver implements HostResolver {
-    @SuppressWarnings("unchecked")
-    private List<String> searchDomains =
-        ResolverConfiguration.open().searchlist();
-    
+    private List<String> searchDomains;
+    {
+      ResolverConfig resolverConfig = ResolverConfig.getCurrentConfig();
+      searchDomains = new ArrayList<>();
+      for (Name name : resolverConfig.searchPath()) {
+        searchDomains.add(name.toString());
+      }
+    }
+
     /**
      * Create an InetAddress with a fully qualified hostname of the given
      * hostname.  InetAddress does not qualify an incomplete hostname that
@@ -604,14 +611,11 @@ public final class SecurityUtil {
     public InetAddress getByName(String host) throws UnknownHostException {
       InetAddress addr = null;
 
-      if (IPAddressUtil.isIPv4LiteralAddress(host)) {
-        // use ipv4 address as-is
-        byte[] ip = IPAddressUtil.textToNumericFormatV4(host);
-        addr = InetAddress.getByAddress(host, ip);
-      } else if (IPAddressUtil.isIPv6LiteralAddress(host)) {
-        // use ipv6 address as-is
-        byte[] ip = IPAddressUtil.textToNumericFormatV6(host);
-        addr = InetAddress.getByAddress(host, ip);
+      if (InetAddresses.isInetAddress(host)) {
+        // valid ip address. use it as-is
+        addr = InetAddresses.forString(host);
+        // set hostname
+        addr = InetAddress.getByAddress(host, addr.getAddress());
       } else if (host.endsWith(".")) {
         // a rooted host ends with a dot, ex. "host."
         // rooted hosts never use the search path, so only try an exact lookup
