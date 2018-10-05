@@ -26,14 +26,23 @@ import org.apache.hadoop.ozone.client.OzoneClient;
 import org.apache.hadoop.ozone.client.OzoneVolume;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.ozone.s3.exception.OS3Exception;
+import org.apache.hadoop.ozone.s3.exception.S3ErrorTable;
+import org.apache.hadoop.ozone.s3.exception.S3ErrorTable.Resource;
+import org.apache.hadoop.ozone.web.utils.OzoneUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Basic helpers for all the REST endpoints.
  */
 public class EndpointBase {
 
+  private static final Logger LOG =
+      LoggerFactory.getLogger(EndpointBase.class);
   @Inject
   private OzoneClient client;
+  private String requestId;
 
   protected OzoneBucket getBucket(String volumeName, String bucketName)
       throws IOException {
@@ -41,13 +50,16 @@ public class EndpointBase {
   }
 
   protected OzoneBucket getBucket(OzoneVolume volume, String bucketName)
-      throws IOException {
-    OzoneBucket bucket = null;
+      throws OS3Exception, IOException {
+    OzoneBucket bucket;
     try {
       bucket = volume.getBucket(bucketName);
-    } catch (Exception ex) {
+    } catch (IOException ex) {
+      LOG.error("Error occurred is {}", ex);
       if (ex.getMessage().contains("NOT_FOUND")) {
-        throw new NotFoundException("Bucket" + bucketName + " is not found");
+        OS3Exception oex = S3ErrorTable.newError(S3ErrorTable.NO_SUCH_BUCKET,
+            OzoneUtils.getRequestID(), Resource.BUCKET);
+        throw oex;
       } else {
         throw ex;
       }
@@ -73,4 +85,18 @@ public class EndpointBase {
   public void setClient(OzoneClient ozoneClient) {
     this.client = ozoneClient;
   }
+
+  /**
+   * Set the requestId.
+   * @param id
+   */
+  protected void setRequestId(String id) {
+    this.requestId = id;
+  }
+
+  @VisibleForTesting
+  public String getRequestId() {
+    return requestId;
+  }
+
 }

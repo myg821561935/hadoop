@@ -102,6 +102,8 @@ public class AzureBlobFileSystemStore {
   private AbfsClient client;
   private URI uri;
   private final UserGroupInformation userGroupInformation;
+  private final String userName;
+  private final String primaryUserGroup;
   private static final String DATE_TIME_PATTERN = "E, dd MMM yyyy HH:mm:ss 'GMT'";
   private static final String XMS_PROPERTIES_ENCODING = "ISO-8859-1";
   private static final int LIST_MAX_RESULTS = 5000;
@@ -113,7 +115,7 @@ public class AzureBlobFileSystemStore {
   private boolean isNamespaceEnabledSet;
   private boolean isNamespaceEnabled;
 
-  public AzureBlobFileSystemStore(URI uri, boolean isSecure, Configuration configuration, UserGroupInformation userGroupInformation)
+  public AzureBlobFileSystemStore(URI uri, boolean isSecureScheme, Configuration configuration, UserGroupInformation userGroupInformation)
           throws AzureBlobFileSystemException, IOException {
     this.uri = uri;
 
@@ -128,16 +130,23 @@ public class AzureBlobFileSystemStore {
     }
 
     this.userGroupInformation = userGroupInformation;
+    this.userName = userGroupInformation.getShortUserName();
+
+    if (!abfsConfiguration.getSkipUserGroupMetadataDuringInitialization()) {
+      primaryUserGroup = userGroupInformation.getPrimaryGroupName();
+    } else {
+      //Provide a default group name
+      primaryUserGroup = userName;
+    }
+
     this.azureAtomicRenameDirSet = new HashSet<>(Arrays.asList(
         abfsConfiguration.getAzureAtomicRenameDirs().split(AbfsHttpConstants.COMMA)));
 
-    if (AuthType.OAuth == abfsConfiguration.getEnum(FS_AZURE_ACCOUNT_AUTH_TYPE_PROPERTY_NAME, AuthType.SharedKey)
-            && !FileSystemUriSchemes.ABFS_SECURE_SCHEME.equals(uri.getScheme())) {
-      throw new IllegalArgumentException(
-              String.format("Incorrect URI %s, URI scheme must be abfss when authenticating using Oauth.", uri));
-    }
+    boolean usingOauth = (AuthType.OAuth == abfsConfiguration.getEnum(
+            FS_AZURE_ACCOUNT_AUTH_TYPE_PROPERTY_NAME, AuthType.SharedKey));
 
-    initializeClient(uri, fileSystemName, accountName, isSecure);
+    boolean useHttps = (usingOauth || abfsConfiguration.isHttpsAlwaysUsed()) ? true : isSecureScheme;
+    initializeClient(uri, fileSystemName, accountName, useHttps);
   }
 
   private String[] authorityParts(URI uri) throws InvalidUriAuthorityException, InvalidUriException {
@@ -462,8 +471,8 @@ public class AzureBlobFileSystemStore {
       final boolean hasAcl = AbfsPermission.isExtendedAcl(permissions);
 
       return new VersionedFileStatus(
-              owner == null ? userGroupInformation.getUserName() : owner,
-              group == null ? userGroupInformation.getPrimaryGroupName() : group,
+              owner == null ? userName : owner,
+              group == null ? primaryUserGroup : group,
               permissions == null ? new AbfsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL)
                       : AbfsPermission.valueOf(permissions),
               hasAcl,
@@ -489,8 +498,8 @@ public class AzureBlobFileSystemStore {
       final boolean hasAcl = AbfsPermission.isExtendedAcl(permissions);
 
       return new VersionedFileStatus(
-              owner == null ? userGroupInformation.getUserName() : owner,
-              group == null ? userGroupInformation.getPrimaryGroupName() : group,
+              owner == null ? userName : owner,
+              group == null ? primaryUserGroup : group,
               permissions == null ? new AbfsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL)
                       : AbfsPermission.valueOf(permissions),
               hasAcl,
@@ -528,8 +537,8 @@ public class AzureBlobFileSystemStore {
       long blockSize = abfsConfiguration.getAzureBlockSize();
 
       for (ListResultEntrySchema entry : retrievedSchema.paths()) {
-        final String owner = entry.owner() == null ? userGroupInformation.getUserName() : entry.owner();
-        final String group = entry.group() == null ? userGroupInformation.getPrimaryGroupName() : entry.group();
+        final String owner = entry.owner() == null ? userName : entry.owner();
+        final String group = entry.group() == null ? primaryUserGroup : entry.group();
         final FsPermission fsPermission = entry.permissions() == null
                 ? new AbfsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL)
                 : AbfsPermission.valueOf(entry.permissions());
@@ -761,8 +770,8 @@ public class AzureBlobFileSystemStore {
             : AbfsPermission.valueOf(permissions);
 
     final AclStatus.Builder aclStatusBuilder = new AclStatus.Builder();
-    aclStatusBuilder.owner(owner == null ? userGroupInformation.getUserName() : owner);
-    aclStatusBuilder.group(group == null ? userGroupInformation.getPrimaryGroupName() : group);
+    aclStatusBuilder.owner(owner == null ? userName : owner);
+    aclStatusBuilder.group(group == null ? primaryUserGroup : group);
 
     aclStatusBuilder.setPermission(fsPermission);
     aclStatusBuilder.stickyBit(fsPermission.getStickyBit());

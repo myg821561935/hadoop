@@ -26,7 +26,6 @@ import org.apache.hadoop.hdds.scm.container.ContainerStateManager;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationRequest;
 import org.apache.hadoop.hdds.scm.events.SCMEvents;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException;
-import org.apache.hadoop.hdds.scm.node.states.Node2ContainerMap;
 import org.apache.hadoop.hdds.server.events.EventHandler;
 import org.apache.hadoop.hdds.server.events.EventPublisher;
 
@@ -38,25 +37,26 @@ import org.slf4j.LoggerFactory;
  */
 public class DeadNodeHandler implements EventHandler<DatanodeDetails> {
 
-  private final Node2ContainerMap node2ContainerMap;
-
   private final ContainerStateManager containerStateManager;
+
+  private final NodeManager nodeManager;
 
   private static final Logger LOG =
       LoggerFactory.getLogger(DeadNodeHandler.class);
 
-  public DeadNodeHandler(
-      Node2ContainerMap node2ContainerMap,
+  public DeadNodeHandler(NodeManager nodeManager,
       ContainerStateManager containerStateManager) {
-    this.node2ContainerMap = node2ContainerMap;
     this.containerStateManager = containerStateManager;
+    this.nodeManager = nodeManager;
   }
 
   @Override
   public void onMessage(DatanodeDetails datanodeDetails,
       EventPublisher publisher) {
+    nodeManager.processDeadNode(datanodeDetails.getUuid());
+
     Set<ContainerID> containers =
-        node2ContainerMap.getContainers(datanodeDetails.getUuid());
+        nodeManager.getContainers(datanodeDetails.getUuid());
     if (containers == null) {
       LOG.info("There's no containers in dead datanode {}, no replica will be"
           + " removed from the in-memory state.", datanodeDetails.getUuid());
@@ -67,8 +67,13 @@ public class DeadNodeHandler implements EventHandler<DatanodeDetails> {
         datanodeDetails.getUuid());
     for (ContainerID container : containers) {
       try {
-        containerStateManager.removeContainerReplica(container,
-            datanodeDetails);
+        try {
+          containerStateManager.removeContainerReplica(container,
+              datanodeDetails);
+        } catch (SCMException ex) {
+          LOG.info("DataNode {} doesn't have replica for container {}.",
+              datanodeDetails.getUuid(), container.getId());
+        }
 
         if (!containerStateManager.isOpen(container)) {
           ReplicationRequest replicationRequest =
@@ -84,5 +89,12 @@ public class DeadNodeHandler implements EventHandler<DatanodeDetails> {
             .getId(), e);
       }
     }
+  }
+
+  /**
+   * Returns logger.
+   * */
+  public static Logger getLogger() {
+    return LOG;
   }
 }

@@ -29,7 +29,7 @@ import org.apache.hadoop.hdds.scm.container.replication.ReplicationActivityStatu
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationRequest;
 import org.apache.hadoop.hdds.scm.events.SCMEvents;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException;
-import org.apache.hadoop.hdds.scm.node.states.Node2ContainerMap;
+import org.apache.hadoop.hdds.scm.node.NodeManager;
 import org.apache.hadoop.hdds.scm.node.states.ReportResult;
 import org.apache.hadoop.hdds.scm.server.SCMDatanodeHeartbeatDispatcher.ContainerReportFromDatanode;
 import org.apache.hadoop.hdds.server.events.EventHandler;
@@ -48,23 +48,23 @@ public class ContainerReportHandler implements
   private static final Logger LOG =
       LoggerFactory.getLogger(ContainerReportHandler.class);
 
-  private final Node2ContainerMap node2ContainerMap;
+  private final NodeManager nodeManager;
 
-  private final Mapping containerMapping;
+  private final ContainerManager containerManager;
 
   private ContainerStateManager containerStateManager;
 
   private ReplicationActivityStatus replicationStatus;
 
-  public ContainerReportHandler(Mapping containerMapping,
-      Node2ContainerMap node2ContainerMap,
+  public ContainerReportHandler(ContainerManager containerManager,
+      NodeManager nodeManager,
       ReplicationActivityStatus replicationActivityStatus) {
-    Preconditions.checkNotNull(containerMapping);
-    Preconditions.checkNotNull(node2ContainerMap);
+    Preconditions.checkNotNull(containerManager);
+    Preconditions.checkNotNull(nodeManager);
     Preconditions.checkNotNull(replicationActivityStatus);
-    this.containerStateManager = containerMapping.getStateManager();
-    this.containerMapping = containerMapping;
-    this.node2ContainerMap = node2ContainerMap;
+    this.containerStateManager = containerManager.getStateManager();
+    this.nodeManager = nodeManager;
+    this.containerManager = containerManager;
     this.replicationStatus = replicationActivityStatus;
   }
 
@@ -80,7 +80,7 @@ public class ContainerReportHandler implements
     try {
 
       //update state in container db and trigger close container events
-      containerMapping
+      containerManager
           .processContainerReports(datanodeOrigin, containerReport, false);
 
       Set<ContainerID> containerIds = containerReport.getReportsList().stream()
@@ -89,11 +89,11 @@ public class ContainerReportHandler implements
           .map(ContainerID::new)
           .collect(Collectors.toSet());
 
-      ReportResult<ContainerID> reportResult = node2ContainerMap
-          .processReport(datanodeOrigin.getUuid(), containerIds);
+      ReportResult<ContainerID> reportResult = nodeManager
+          .processContainerReport(datanodeOrigin.getUuid(), containerIds);
 
       //we have the report, so we can update the states for the next iteration.
-      node2ContainerMap
+      nodeManager
           .setContainersForDatanode(datanodeOrigin.getUuid(), containerIds);
 
       for (ContainerID containerID : reportResult.getMissingEntries()) {

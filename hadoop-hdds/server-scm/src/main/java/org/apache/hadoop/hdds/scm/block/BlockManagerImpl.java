@@ -21,7 +21,7 @@ import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ScmOps;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
 import org.apache.hadoop.hdds.scm.ScmUtils;
-import org.apache.hadoop.hdds.scm.container.Mapping;
+import org.apache.hadoop.hdds.scm.container.ContainerManager;
 import org.apache.hadoop.hdds.scm.container.common.helpers.AllocatedBlock;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerInfo;
@@ -50,8 +50,6 @@ import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.hadoop.hdds.scm.exceptions.SCMException.ResultCodes
-    .CHILL_MODE_EXCEPTION;
-import static org.apache.hadoop.hdds.scm.exceptions.SCMException.ResultCodes
     .INVALID_BLOCK_SIZE;
 import static org.apache.hadoop.ozone.OzoneConfigKeys
     .OZONE_BLOCK_DELETING_SERVICE_INTERVAL;
@@ -72,7 +70,7 @@ public class BlockManagerImpl implements EventHandler<Boolean>,
   // by itself and does not rely on the Block service offered by SCM.
 
   private final NodeManager nodeManager;
-  private final Mapping containerManager;
+  private final ContainerManager containerManager;
 
   private final long containerSize;
 
@@ -94,7 +92,7 @@ public class BlockManagerImpl implements EventHandler<Boolean>,
    * @throws IOException
    */
   public BlockManagerImpl(final Configuration conf,
-      final NodeManager nodeManager, final Mapping containerManager,
+      final NodeManager nodeManager, final ContainerManager containerManager,
       EventPublisher eventPublisher)
       throws IOException {
     this.nodeManager = nodeManager;
@@ -345,10 +343,7 @@ public class BlockManagerImpl implements EventHandler<Boolean>,
    */
   @Override
   public void deleteBlocks(List<BlockID> blockIDs) throws IOException {
-    if (!nodeManager.isOutOfChillMode()) {
-      throw new SCMException("Unable to delete block while in chill mode",
-          CHILL_MODE_EXCEPTION);
-    }
+    ScmUtils.preCheck(ScmOps.deleteBlock, chillModePrecheck);
 
     LOG.info("Deleting blocks {}", StringUtils.join(",", blockIDs));
     Map<Long, List<Long>> containerBlocks = new HashMap<>();

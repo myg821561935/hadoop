@@ -541,7 +541,14 @@ public class YarnConfiguration extends Configuration {
   public static final String RM_RESOURCE_TRACKER_CLIENT_THREAD_COUNT =
     RM_PREFIX + "resource-tracker.client.thread-count";
   public static final int DEFAULT_RM_RESOURCE_TRACKER_CLIENT_THREAD_COUNT = 50;
-  
+
+  /** Check IP and hostname resolution during nodemanager registration.*/
+  public static final String RM_NM_REGISTRATION_IP_HOSTNAME_CHECK_KEY =
+      RM_PREFIX + "resource-tracker.nm.ip-hostname-check";
+
+  public static final boolean DEFAULT_RM_NM_REGISTRATION_IP_HOSTNAME_CHECK_KEY =
+      false;
+
   /** The class to use as the resource scheduler.*/
   public static final String RM_SCHEDULER = 
     RM_PREFIX + "scheduler.class";
@@ -1882,8 +1889,16 @@ public class YarnConfiguration extends Configuration {
   public static final String[] DEFAULT_LINUX_CONTAINER_RUNTIME_ALLOWED_RUNTIMES
       = {"default"};
 
+  /** Default runtime to be used. */
+  public static final String LINUX_CONTAINER_RUNTIME_TYPE =
+      LINUX_CONTAINER_RUNTIME_PREFIX + "type";
+
   public static final String DOCKER_CONTAINER_RUNTIME_PREFIX =
       LINUX_CONTAINER_RUNTIME_PREFIX + "docker.";
+
+  /** Default docker image to be used. */
+  public static final String NM_DOCKER_IMAGE_NAME =
+      DOCKER_CONTAINER_RUNTIME_PREFIX + "image-name";
 
   /** Capabilities allowed (and added by default) for docker containers. **/
   public static final String NM_DOCKER_CONTAINER_CAPABILITIES =
