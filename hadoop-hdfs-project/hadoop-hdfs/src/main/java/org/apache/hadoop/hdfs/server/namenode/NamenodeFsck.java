@@ -25,6 +25,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
@@ -94,14 +95,13 @@ import com.google.common.annotations.VisibleForTesting;
  * <p>The tool scans all files and directories, starting from an indicated
  *  root path. The following abnormal conditions are detected and handled:</p>
  * <ul>
- * <li>files with blocks that are completely missing from all datanodes.<br/>
+ * <li>files with blocks that are completely missing from all datanodes.<br>
  * In this case the tool can perform one of the following actions:
  *  <ul>
- *      <li>none ({@link #FIXING_NONE})</li>
  *      <li>move corrupted files to /lost+found directory on DFS
- *      ({@link #FIXING_MOVE}). Remaining data blocks are saved as a
+ *      ({@link #doMove}). Remaining data blocks are saved as a
  *      block chains, representing longest consecutive series of valid blocks.</li>
- *      <li>delete corrupted files ({@link #FIXING_DELETE})</li>
+ *      <li>delete corrupted files ({@link #doDelete})</li>
  *  </ul>
  *  </li>
  *  <li>detect files with under-replicated or over-replicated blocks</li>
@@ -174,6 +174,14 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
    */
   private boolean doDelete = false;
 
+  /**
+   * True if the user specified the -replicate option.
+   *
+   * When this option is in effect, we will initiate replication work to make
+   * mis-replicated blocks confirm the block placement policy.
+   */
+  private boolean doReplicate = false;
+
   String path = "/";
 
   private String blockIds = null;
@@ -201,7 +209,7 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
    */
   NamenodeFsck(Configuration conf, NameNode namenode,
       NetworkTopology networktopology,
-      Map<String,String[]> pmap, PrintWriter out,
+      Map<String, String[]> pmap, PrintWriter out,
       int totalDatanodes, InetAddress remoteAddress) {
     this.conf = conf;
     this.namenode = namenode;
@@ -250,6 +258,8 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
         this.snapshottableDirs = new ArrayList<String>();
       } else if (key.equals("blockId")) {
         this.blockIds = pmap.get("blockId")[0];
+      } else if (key.equals("replicate")) {
+        this.doReplicate = true;
       }
     }
   }
@@ -684,6 +694,7 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
     StringBuilder report = new StringBuilder();
     int blockNumber = 0;
     final LocatedBlock lastBlock = blocks.getLastLocatedBlock();
+    List<BlockInfo> misReplicatedBlocks = new LinkedList<>();
     for (LocatedBlock lBlk : blocks.getLocatedBlocks()) {
       ExtendedBlock block = lBlk.getBlock();
       if (!blocks.isLastBlockComplete() && lastBlock != null &&
@@ -792,6 +803,9 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
         }
         out.println(" Replica placement policy is violated for " +
                     block + ". " + blockPlacementStatus.getErrorDescription());
+        if (doReplicate) {
+          misReplicatedBlocks.add(storedBlock);
+        }
       }
 
       // count storage summary
@@ -888,6 +902,19 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
       if (showBlocks) {
         out.print(report + "\n");
       }
+    }
+
+    if (doReplicate && !misReplicatedBlocks.isEmpty()) {
+      int processedBlocks = this.blockManager.processMisReplicatedBlocks(
+              misReplicatedBlocks);
+      if (processedBlocks < misReplicatedBlocks.size()) {
+        LOG.warn("Fsck: Block manager is able to process only " +
+                processedBlocks +
+                " mis-replicated blocks (Total count : " +
+                misReplicatedBlocks.size() +
+                " ) for path " + path);
+      }
+      res.numBlocksQueuedForReplication += processedBlocks;
     }
   }
 
@@ -1168,6 +1195,7 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
     long totalSize = 0L;
     long totalOpenFilesSize = 0L;
     long totalReplicas = 0L;
+    long numBlocksQueuedForReplication = 0L;
 
     /**
      * DFS is considered healthy if there are no missing blocks.
@@ -1311,6 +1339,8 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
         res.append("\n InMaintenanceReplicas:\t").append(
             inMaintenanceReplicas);
       }
+      res.append("\n Blocks queued for replication:\t").append(
+              numBlocksQueuedForReplication);
       return res.toString();
     }
   }
@@ -1421,6 +1451,8 @@ public class NamenodeFsck implements DataEncryptionKeyFactory {
         res.append("\n InMaintenanceReplicas:\t").append(
             inMaintenanceReplicas);
       }
+      res.append("\n Blocks queued for replication:\t").append(
+              numBlocksQueuedForReplication);
       return res.toString();
     }
   }

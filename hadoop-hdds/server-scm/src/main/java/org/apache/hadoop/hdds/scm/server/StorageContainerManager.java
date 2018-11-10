@@ -36,17 +36,19 @@ import org.apache.hadoop.hdds.scm.block.BlockManager;
 import org.apache.hadoop.hdds.scm.block.BlockManagerImpl;
 import org.apache.hadoop.hdds.scm.block.DeletedBlockLogImpl;
 import org.apache.hadoop.hdds.scm.block.PendingDeleteHandler;
+import org.apache.hadoop.hdds.scm.chillmode.SCMChillModeManager;
 import org.apache.hadoop.hdds.scm.command.CommandStatusReportHandler;
 import org.apache.hadoop.hdds.scm.container.CloseContainerEventHandler;
-import org.apache.hadoop.hdds.scm.container.CloseContainerWatcher;
 import org.apache.hadoop.hdds.scm.container.ContainerActionsHandler;
+import org.apache.hadoop.hdds.scm.container.ContainerID;
 import org.apache.hadoop.hdds.scm.container.ContainerManager;
+import org.apache.hadoop.hdds.scm.container.IncrementalContainerReportHandler;
 import org.apache.hadoop.hdds.scm.container.SCMContainerManager;
 import org.apache.hadoop.hdds.scm.container.ContainerReportHandler;
 import org.apache.hadoop.hdds.scm.container.replication
     .ReplicationActivityStatus;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager;
-import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerInfo;
+import org.apache.hadoop.hdds.scm.container.ContainerInfo;
 import org.apache.hadoop.hdds.scm.container.placement.algorithms
     .ContainerPlacementPolicy;
 import org.apache.hadoop.hdds.scm.container.placement.algorithms
@@ -62,9 +64,10 @@ import org.apache.hadoop.hdds.scm.node.NodeManager;
 import org.apache.hadoop.hdds.scm.node.NodeReportHandler;
 import org.apache.hadoop.hdds.scm.node.SCMNodeManager;
 import org.apache.hadoop.hdds.scm.node.StaleNodeHandler;
-import org.apache.hadoop.hdds.scm.pipelines.PipelineCloseHandler;
-import org.apache.hadoop.hdds.scm.pipelines.PipelineActionEventHandler;
-import org.apache.hadoop.hdds.scm.pipelines.PipelineReportHandler;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineActionHandler;
+import org.apache.hadoop.hdds.scm.pipeline.SCMPipelineManager;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineManager;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineReportHandler;
 import org.apache.hadoop.hdds.server.ServiceRuntimeInfoImpl;
 import org.apache.hadoop.hdds.server.events.EventPublisher;
 import org.apache.hadoop.hdds.server.events.EventQueue;
@@ -96,9 +99,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
-
-import static org.apache.hadoop.hdds.scm.ScmConfigKeys.OZONE_SCM_DB_CACHE_SIZE_DEFAULT;
-import static org.apache.hadoop.hdds.scm.ScmConfigKeys.OZONE_SCM_DB_CACHE_SIZE_MB;
 
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_ENABLED;
 import static org.apache.hadoop.util.ExitUtil.terminate;
@@ -151,6 +151,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
    * State Managers of SCM.
    */
   private final NodeManager scmNodeManager;
+  private final PipelineManager pipelineManager;
   private final ContainerManager containerManager;
   private final BlockManager scmBlockManager;
   private final SCMStorage scmStorage;
@@ -190,9 +191,6 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
    */
   private StorageContainerManager(OzoneConfiguration conf) throws IOException {
 
-    final int cacheSize = conf.getInt(OZONE_SCM_DB_CACHE_SIZE_MB,
-        OZONE_SCM_DB_CACHE_SIZE_DEFAULT);
-
     StorageContainerManager.initMetrics();
     initContainerReportCache(conf);
 
@@ -206,10 +204,11 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
 
     scmNodeManager = new SCMNodeManager(
         conf, scmStorage.getClusterID(), this, eventQueue);
+    pipelineManager = new SCMPipelineManager(conf, scmNodeManager, eventQueue);
     containerManager = new SCMContainerManager(
-        conf, getScmNodeManager(), cacheSize, eventQueue);
+        conf, scmNodeManager, pipelineManager, eventQueue);
     scmBlockManager = new BlockManagerImpl(
-        conf, getScmNodeManager(), containerManager, eventQueue);
+        conf, scmNodeManager, containerManager, eventQueue);
 
     replicationStatus = new ReplicationActivityStatus();
 
@@ -218,31 +217,29 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
     NodeReportHandler nodeReportHandler =
         new NodeReportHandler(scmNodeManager);
     PipelineReportHandler pipelineReportHandler =
-            new PipelineReportHandler(
-                    containerManager.getPipelineSelector());
+            new PipelineReportHandler(pipelineManager, conf);
     CommandStatusReportHandler cmdStatusReportHandler =
         new CommandStatusReportHandler();
 
-    NewNodeHandler newNodeHandler = new NewNodeHandler(scmNodeManager);
+    NewNodeHandler newNodeHandler = new NewNodeHandler();
     StaleNodeHandler staleNodeHandler =
-        new StaleNodeHandler(containerManager.getPipelineSelector());
+        new StaleNodeHandler(scmNodeManager, pipelineManager);
     DeadNodeHandler deadNodeHandler = new DeadNodeHandler(scmNodeManager,
-        getContainerManager().getStateManager());
+        containerManager);
     ContainerActionsHandler actionsHandler = new ContainerActionsHandler();
     PendingDeleteHandler pendingDeleteHandler =
         new PendingDeleteHandler(scmBlockManager.getSCMBlockDeletingService());
 
     ContainerReportHandler containerReportHandler =
-        new ContainerReportHandler(containerManager, scmNodeManager,
-            replicationStatus);
-    scmChillModeManager = new SCMChillModeManager(conf,
-        getContainerManager().getStateManager().getAllContainers(),
-        eventQueue);
-    PipelineActionEventHandler pipelineActionEventHandler =
-        new PipelineActionEventHandler();
+        new ContainerReportHandler(scmNodeManager, pipelineManager,
+            containerManager, replicationStatus);
 
-    PipelineCloseHandler pipelineCloseHandler =
-        new PipelineCloseHandler(containerManager.getPipelineSelector());
+    IncrementalContainerReportHandler incrementalContainerReportHandler =
+        new IncrementalContainerReportHandler(
+            pipelineManager, containerManager);
+
+    PipelineActionHandler pipelineActionHandler =
+        new PipelineActionHandler(pipelineManager);
 
     long watcherTimeout =
         conf.getTimeDuration(ScmConfigKeys.HDDS_SCM_WATCHER_TIMEOUT,
@@ -263,15 +260,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
         new SCMContainerPlacementCapacity(scmNodeManager, conf);
 
     replicationManager = new ReplicationManager(containerPlacementPolicy,
-        containerManager.getStateManager(), eventQueue,
-        commandWatcherLeaseManager);
-
-    // setup CloseContainer watcher
-    CloseContainerWatcher closeContainerWatcher =
-        new CloseContainerWatcher(SCMEvents.CLOSE_CONTAINER_RETRYABLE_REQ,
-            SCMEvents.CLOSE_CONTAINER_STATUS, commandWatcherLeaseManager,
-            containerManager);
-    closeContainerWatcher.start(eventQueue);
+        containerManager, eventQueue, commandWatcherLeaseManager);
 
     scmAdminUsernames = conf.getTrimmedStringCollection(OzoneConfigKeys
         .OZONE_ADMINISTRATORS);
@@ -290,6 +279,8 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
     eventQueue.addHandler(SCMEvents.RETRIABLE_DATANODE_COMMAND, scmNodeManager);
     eventQueue.addHandler(SCMEvents.NODE_REPORT, nodeReportHandler);
     eventQueue.addHandler(SCMEvents.CONTAINER_REPORT, containerReportHandler);
+    eventQueue.addHandler(SCMEvents.INCREMENTAL_CONTAINER_REPORT,
+        incrementalContainerReportHandler);
     eventQueue.addHandler(SCMEvents.CONTAINER_ACTIONS, actionsHandler);
     eventQueue.addHandler(SCMEvents.CLOSE_CONTAINER, closeContainerHandler);
     eventQueue.addHandler(SCMEvents.NEW_NODE, newNodeHandler);
@@ -298,22 +289,24 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
     eventQueue.addHandler(SCMEvents.CMD_STATUS_REPORT, cmdStatusReportHandler);
     eventQueue.addHandler(SCMEvents.START_REPLICATION,
         replicationStatus.getReplicationStatusListener());
-    eventQueue.addHandler(SCMEvents.CHILL_MODE_STATUS,
-        replicationStatus.getChillModeStatusListener());
     eventQueue
         .addHandler(SCMEvents.PENDING_DELETE_STATUS, pendingDeleteHandler);
     eventQueue.addHandler(SCMEvents.DELETE_BLOCK_STATUS,
         (DeletedBlockLogImpl) scmBlockManager.getDeletedBlockLog());
-    eventQueue.addHandler(SCMEvents.PIPELINE_ACTIONS,
-        pipelineActionEventHandler);
-    eventQueue.addHandler(SCMEvents.PIPELINE_CLOSE, pipelineCloseHandler);
-    eventQueue.addHandler(SCMEvents.NODE_REGISTRATION_CONT_REPORT,
-        scmChillModeManager);
-    eventQueue.addHandler(SCMEvents.CHILL_MODE_STATUS,
-        (BlockManagerImpl) scmBlockManager);
+    eventQueue.addHandler(SCMEvents.PIPELINE_ACTIONS, pipelineActionHandler);
     eventQueue.addHandler(SCMEvents.CHILL_MODE_STATUS, clientProtocolServer);
     eventQueue.addHandler(SCMEvents.PIPELINE_REPORT, pipelineReportHandler);
 
+    eventQueue.addHandler(SCMEvents.CHILL_MODE_STATUS,
+        replicationStatus.getChillModeStatusListener());
+    eventQueue.addHandler(SCMEvents.CHILL_MODE_STATUS,
+        (BlockManagerImpl) scmBlockManager);
+    scmChillModeManager = new SCMChillModeManager(conf,
+        containerManager.getContainers(),
+        eventQueue);
+
+    eventQueue.addHandler(SCMEvents.NODE_REGISTRATION_CONT_REPORT,
+        scmChillModeManager);
     registerMXBean();
   }
 
@@ -513,7 +506,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
 
   private static StartupOption parseArguments(String[] args) {
     int argsLen = (args == null) ? 0 : args.length;
-    StartupOption startOpt = StartupOption.HELP;
+    StartupOption startOpt = null;
     if (argsLen == 0) {
       startOpt = StartupOption.REGULAR;
     }
@@ -614,12 +607,11 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
   }
 
   private void registerMXBean() {
-    Map<String, String> jmxProperties = new HashMap<>();
+    final Map<String, String> jmxProperties = new HashMap<>();
     jmxProperties.put("component", "ServerRuntime");
-    this.scmInfoBeanName =
-        MBeans.register(
-            "StorageContainerManager", "StorageContainerManagerInfo",
-            jmxProperties, this);
+    this.scmInfoBeanName = HddsUtils.registerWithJmxProperties(
+        "StorageContainerManager", "StorageContainerManagerInfo",
+        jmxProperties, this);
   }
 
   private void unregisterMXBean() {
@@ -632,7 +624,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
   @VisibleForTesting
   public ContainerInfo getContainerInfo(long containerID) throws
       IOException {
-    return containerManager.getContainer(containerID);
+    return containerManager.getContainer(ContainerID.valueof(containerID));
   }
 
   /**
@@ -775,6 +767,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
       LOG.error("SCM Event Queue stop failed", ex);
     }
     IOUtils.cleanupWithLogger(LOG, containerManager);
+    IOUtils.cleanupWithLogger(LOG, pipelineManager);
   }
 
   /**
@@ -817,6 +810,16 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
   @VisibleForTesting
   public NodeManager getScmNodeManager() {
     return scmNodeManager;
+  }
+
+  /**
+   * Returns pipeline manager.
+   *
+   * @return - Pipeline Manager
+   */
+  @VisibleForTesting
+  public PipelineManager getPipelineManager() {
+    return pipelineManager;
   }
 
   @VisibleForTesting
@@ -927,10 +930,10 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
    * Startup options.
    */
   public enum StartupOption {
-    INIT("-init"),
-    CLUSTERID("-clusterid"),
-    GENCLUSTERID("-genclusterid"),
-    REGULAR("-regular"),
+    INIT("--init"),
+    CLUSTERID("--clusterid"),
+    GENCLUSTERID("--genclusterid"),
+    REGULAR("--regular"),
     HELP("-help");
 
     private final String name;

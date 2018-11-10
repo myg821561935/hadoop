@@ -22,7 +22,7 @@ import com.google.common.collect.Sets;
 import com.google.common.primitives.Longs;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.StorageType;
+import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.server.datanode.ObjectStoreHandler;
@@ -162,9 +162,10 @@ public class TestStorageContainerManagerHelper {
         .getStorageContainerManager().getClientProtocolServer()
         .getContainerWithPipeline(containerID);
 
-    DatanodeDetails leadDN = containerWithPipeline.getPipeline().getLeader();
+    DatanodeDetails dn =
+        containerWithPipeline.getPipeline().getFirstNode();
     OzoneContainer containerServer =
-        getContainerServerByDatanodeUuid(leadDN.getUuidString());
+        getContainerServerByDatanodeUuid(dn.getUuidString());
     KeyValueContainerData containerData =
         (KeyValueContainerData) containerServer.getContainerSet()
         .getContainer(containerID).getContainerData();

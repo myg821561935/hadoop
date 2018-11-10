@@ -75,7 +75,8 @@ public final class BlockUtils {
     Preconditions.checkNotNull(containerData.getDbFile());
     try {
       return cache.getDB(containerData.getContainerID(), containerData
-          .getContainerDBType(), containerData.getDbFile().getAbsolutePath());
+          .getContainerDBType(), containerData.getDbFile().getAbsolutePath(),
+          conf);
     } catch (IOException ex) {
       String message = String.format("Error opening DB. Container:%s " +
           "ContainerPath:%s", containerData.getContainerID(), containerData
@@ -133,10 +134,11 @@ public final class BlockUtils {
    */
   public static ContainerCommandResponseProto putBlockResponseSuccess(
       ContainerCommandRequestProto msg, long blockLength) {
+    ContainerProtos.BlockData blockData = msg.getPutBlock().getBlockData();
     GetCommittedBlockLengthResponseProto.Builder
         committedBlockLengthResponseBuilder =
         getCommittedBlockLengthResponseBuilder(blockLength,
-            msg.getPutBlock().getBlockData().getBlockID());
+            blockData.getBlockID());
     PutBlockResponseProto.Builder putKeyResponse =
         PutBlockResponseProto.newBuilder();
     putKeyResponse
@@ -186,7 +188,7 @@ public final class BlockUtils {
     return builder.build();
   }
 
-  private static GetCommittedBlockLengthResponseProto.Builder
+  public static GetCommittedBlockLengthResponseProto.Builder
           getCommittedBlockLengthResponseBuilder(long blockLength,
       ContainerProtos.DatanodeBlockID blockID) {
     ContainerProtos.GetCommittedBlockLengthResponseProto.Builder

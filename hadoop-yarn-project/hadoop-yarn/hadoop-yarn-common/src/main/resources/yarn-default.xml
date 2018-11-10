@@ -3505,6 +3505,24 @@
 
   <property>
     <description>
+      Specifies what the RM does regarding HTTPS enforcement for communication
+      with AM Web Servers, as well as generating and providing certificates.
+      Possible values are:
+      - NONE - the RM will do nothing special.
+      - LENIENT - the RM will generate and provide a keystore and truststore
+      to the AM, which it is free to use for HTTPS in its tracking URL web
+      server.  The RM proxy will still allow HTTP connections to AMs that opt
+      not to use HTTPS.
+      - STRICT - this is the same as LENIENT, except that the RM proxy will
+      only allow HTTPS connections to AMs; HTTP connections will be blocked
+      and result in a warning page to the user.
+    </description>
+    <name>yarn.resourcemanager.application-https.policy</name>
+    <value>NONE</value>
+  </property>
+
+  <property>
+    <description>
       Defines the limit of the diagnostics message of an application
       attempt, in kilo characters (character count * 1024).
       When using ZooKeeper to store application state behavior, its
@@ -3754,6 +3772,25 @@
 
   <property>
     <description>
+      This setting controls if pluggable device framework is enabled.
+      Disabled by default
+    </description>
+    <name>yarn.nodemanager.pluggable-device-framework.enabled</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <description>
+      Configure vendor device plugin class name here. Comma separated.
+      The class must be found in CLASSPATH. The pluggable device framework will
+      load these classes.
+    </description>
+    <name>yarn.nodemanager.pluggable-device-framework.device-classes</name>
+    <value></value>
+  </property>
+
+  <property>
+    <description>
       When yarn.nodemanager.resource.gpu.allowed-gpu-devices=auto specified,
       YARN NodeManager needs to run GPU discovery binary (now only support
       nvidia-smi) to get GPU-related information.
@@ -3769,7 +3806,7 @@
     <description>
       Enable additional discovery/isolation of resources on the NodeManager,
       split by comma. By default, this is empty.
-      Acceptable values: { "yarn-io/gpu", "yarn-io/fpga"}.
+      Acceptable values: { "yarn.io/gpu", "yarn.io/fpga"}.
     </description>
     <name>yarn.nodemanager.resource-plugins</name>
     <value></value>
@@ -3850,9 +3887,10 @@
       At present, since we can only configure one major number in c-e.cfg, FPGA device is
       identified by their minor device number. A common approach to get minor
       device number of FPGA is using "aocl diagnose" and check uevent with device name.
+      A sample manual value for this is like "0,1"
     </description>
     <name>yarn.nodemanager.resource-plugins.fpga.allowed-fpga-devices</name>
-    <value>0,1</value>
+    <value>auto</value>
   </property>
 
   <property>

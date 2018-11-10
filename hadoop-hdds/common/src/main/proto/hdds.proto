@@ -47,6 +47,7 @@ message PipelineID {
 message Pipeline {
     required string leaderID = 1;
     repeated DatanodeDetailsProto members = 2;
+    // TODO: remove the state and leaderID from this class
     optional LifeCycleState state = 3 [default = OPEN];
     optional ReplicationType type = 4 [default = STAND_ALONE];
     optional ReplicationFactor factor = 5 [default = ONE];
@@ -130,24 +131,21 @@ enum LifeCycleEvent {
     CLEANUP = 8;
 }
 
-message SCMContainerInfo {
+message ContainerInfoProto {
     required int64 containerID = 1;
     required LifeCycleState state = 2;
     optional PipelineID pipelineID = 3;
-    // This is not total size of container, but space allocated by SCM for
-    // clients to write blocks
-    required uint64 allocatedBytes = 4;
-    required uint64 usedBytes = 5;
-    required uint64 numberOfKeys = 6;
-    optional int64 stateEnterTime = 7;
-    required string owner = 8;
-    optional int64 deleteTransactionId = 9;
-    required ReplicationFactor replicationFactor  = 10;
-    required ReplicationType replicationType  = 11;
+    required uint64 usedBytes = 4;
+    required uint64 numberOfKeys = 5;
+    optional int64 stateEnterTime = 6;
+    required string owner = 7;
+    optional int64 deleteTransactionId = 8;
+    required ReplicationFactor replicationFactor  = 9;
+    required ReplicationType replicationType  = 10;
 }
 
 message ContainerWithPipeline {
-  required SCMContainerInfo containerInfo = 1;
+  required ContainerInfoProto containerInfo = 1;
   required Pipeline pipeline = 2;
 }
 
@@ -188,7 +186,12 @@ enum ScmOps {
 /**
  * Block ID that uniquely identify a block by SCM.
  */
-message BlockID {
+message ContainerBlockID {
     required int64 containerID = 1;
     required int64 localID = 2;
+}
+
+message BlockID {
+    required ContainerBlockID containerBlockID = 1;
+    optional uint64 blockCommitSequenceId = 2 [default = 0];
 }

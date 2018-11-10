@@ -599,9 +599,17 @@
       secret$
       password$
       ssl.keystore.pass$
-      fs.s3.*[Ss]ecret.?[Kk]ey
+      fs.s3a.server-side-encryption.key
       fs.s3a.*.server-side-encryption.key
+      fs.s3a.secret.key
+      fs.s3a.*.secret.key
+      fs.s3a.session.key
+      fs.s3a.*.session.key
+      fs.s3a.session.token
+      fs.s3a.*.session.token
       fs.azure.account.key.*
+      fs.azure.oauth2.*
+      fs.adl.oauth2.*
       credential$
       oauth.*secret
       oauth.*password
@@ -646,6 +654,14 @@
     <description>The minimum time between relogin attempts for Kerberos, in
     seconds.
     </description>
+</property>
+
+<property>
+  <name>hadoop.kerberos.keytab.login.autorenewal.enabled</name>
+  <value>false</value>
+  <description>Used to enable automatic renewal of keytab based kerberos login.
+    By default the automatic renewal is disabled for keytab based kerberos login.
+  </description>
 </property>
 
 <property>
@@ -914,6 +930,14 @@
   <description>
     Set FTP's transfer mode based on configuration. Valid values are
     STREAM_TRANSFER_MODE, BLOCK_TRANSFER_MODE and COMPRESSED_TRANSFER_MODE.
+  </description>
+</property>
+
+<property>
+  <name>fs.ftp.timeout</name>
+  <value>0</value>
+  <description>
+    FTP filesystem's timeout in seconds.
   </description>
 </property>
 
@@ -1771,19 +1795,6 @@
   </description>
 </property>
 
-
-<!-- Ozone file system properties -->
-<property>
-  <name>fs.o3.impl</name>
-  <value>org.apache.hadoop.fs.ozone.OzoneFileSystem</value>
-  <description>The implementation class of the Ozone FileSystem.</description>
-</property>
-
-<property>
-  <name>fs.AbstractFileSystem.o3.impl</name>
-  <value>org.apache.hadoop.fs.ozone.OzFs</value>
-  <description>The implementation class of the OzFs AbstractFileSystem.</description>
-</property>
 
 <!-- ipc properties -->
 
@@ -2752,22 +2763,6 @@
 
 
   <!-- YARN registry -->
-
-  <property>
-    <name>hadoop.registry.rm.enabled</name>
-    <value>false</value>
-    <description>
-      Is the registry enabled in the YARN Resource Manager?
-
-      If true, the YARN RM will, as needed.
-      create the user and system paths, and purge
-      service records when containers, application attempts
-      and applications complete.
-
-      If false, the paths must be created by other means,
-      and no automatic cleanup of service records will take place.
-    </description>
-  </property>
 
   <property>
     <name>hadoop.registry.zk.root</name>

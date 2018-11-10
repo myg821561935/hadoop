@@ -20,17 +20,24 @@ package org.apache.hadoop.ozone.client.rpc;
 
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.RandomUtils;
-import org.apache.hadoop.fs.StorageType;
+import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
-import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerInfo;
-import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
+import org.apache.hadoop.hdds.scm.container.ContainerID;
+import org.apache.hadoop.hdds.scm.container.ContainerInfo;
+import org.apache.hadoop.hdds.scm.XceiverClientManager;
+import org.apache.hadoop.hdds.scm.XceiverClientRatis;
+import org.apache.hadoop.hdds.scm.XceiverClientSpi;
+import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
+
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.ozone.*;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.ozone.client.*;
 import org.apache.hadoop.hdds.client.OzoneQuota;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
+import org.apache.hadoop.ozone.client.io.ChunkGroupOutputStream;
 import org.apache.hadoop.ozone.client.io.OzoneInputStream;
 import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
 import org.apache.hadoop.ozone.container.common.helpers.BlockData;
@@ -45,6 +52,7 @@ import org.apache.hadoop.ozone.client.rest.OzoneException;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
 import org.apache.hadoop.hdds.scm.protocolPB.
     StorageContainerLocationProtocolClientSideTranslatorPB;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.util.Time;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -198,6 +206,67 @@ public class TestOzoneRpcClient {
     Assert.assertEquals(bucketName, bucket.getName());
     Assert.assertTrue(bucket.getCreationTime() >= currentTime);
     Assert.assertTrue(volume.getCreationTime() >= currentTime);
+  }
+
+  @Test
+  public void testCreateS3Bucket()
+      throws IOException, OzoneException {
+    long currentTime = Time.now();
+    String userName = "ozone";
+    String bucketName = UUID.randomUUID().toString();
+    store.createS3Bucket(userName, bucketName);
+    String volumeName = store.getOzoneVolumeName(bucketName);
+    OzoneVolume volume = store.getVolume(volumeName);
+    OzoneBucket bucket = volume.getBucket(bucketName);
+    Assert.assertEquals(bucketName, bucket.getName());
+    Assert.assertTrue(bucket.getCreationTime() >= currentTime);
+    Assert.assertTrue(volume.getCreationTime() >= currentTime);
+  }
+
+  @Test
+  public void testDeleteS3Bucket()
+      throws IOException, OzoneException {
+    long currentTime = Time.now();
+    String userName = "ozone1";
+    String bucketName = UUID.randomUUID().toString();
+    store.createS3Bucket(userName, bucketName);
+    String volumeName = store.getOzoneVolumeName(bucketName);
+    OzoneVolume volume = store.getVolume(volumeName);
+    OzoneBucket bucket = volume.getBucket(bucketName);
+    Assert.assertEquals(bucketName, bucket.getName());
+    Assert.assertTrue(bucket.getCreationTime() >= currentTime);
+    Assert.assertTrue(volume.getCreationTime() >= currentTime);
+    store.deleteS3Bucket(bucketName);
+    thrown.expect(IOException.class);
+    store.getOzoneVolumeName(bucketName);
+  }
+
+  @Test
+  public void testDeleteS3NonExistingBucket() {
+    try {
+      store.deleteS3Bucket(UUID.randomUUID().toString());
+    } catch (IOException ex) {
+      GenericTestUtils.assertExceptionContains("NOT_FOUND", ex);
+    }
+  }
+
+  @Test
+  public void testCreateS3BucketMapping()
+      throws IOException, OzoneException {
+    long currentTime = Time.now();
+    String userName = "ozone";
+    String bucketName = UUID.randomUUID().toString();
+    store.createS3Bucket(userName, bucketName);
+    String volumeName = store.getOzoneVolumeName(bucketName);
+    OzoneVolume volume = store.getVolume(volumeName);
+    OzoneBucket bucket = volume.getBucket(bucketName);
+    Assert.assertEquals(bucketName, bucket.getName());
+
+    String mapping = store.getOzoneBucketMapping(bucketName);
+    Assert.assertEquals("s3"+userName+"/"+bucketName, mapping);
+    Assert.assertEquals(bucketName, store.getOzoneBucketName(bucketName));
+    Assert.assertEquals("s3"+userName, store.getOzoneVolumeName(bucketName));
+
   }
 
   @Test
@@ -535,6 +604,108 @@ public class TestOzoneRpcClient {
   }
 
   @Test
+  public void testPutKeyAndGetKeyThreeNodes()
+      throws Exception {
+    String volumeName = UUID.randomUUID().toString();
+    String bucketName = UUID.randomUUID().toString();
+
+    String value = "sample value";
+    store.createVolume(volumeName);
+    OzoneVolume volume = store.getVolume(volumeName);
+    volume.createBucket(bucketName);
+    OzoneBucket bucket = volume.getBucket(bucketName);
+
+    String keyName = UUID.randomUUID().toString();
+
+    OzoneOutputStream out = bucket
+        .createKey(keyName, value.getBytes().length, ReplicationType.RATIS,
+            ReplicationFactor.THREE);
+    ChunkGroupOutputStream groupOutputStream =
+        (ChunkGroupOutputStream) out.getOutputStream();
+    XceiverClientManager manager = groupOutputStream.getXceiverClientManager();
+    out.write(value.getBytes());
+    out.close();
+    // First, confirm the key info from the client matches the info in OM.
+    OmKeyArgs.Builder builder = new OmKeyArgs.Builder();
+    builder.setVolumeName(volumeName).setBucketName(bucketName)
+        .setKeyName(keyName);
+    OmKeyLocationInfo keyInfo = ozoneManager.lookupKey(builder.build()).
+        getKeyLocationVersions().get(0).getBlocksLatestVersionOnly().get(0);
+    long containerID = keyInfo.getContainerID();
+    long localID = keyInfo.getLocalID();
+    OzoneKeyDetails keyDetails = bucket.getKey(keyName);
+    Assert.assertEquals(keyName, keyDetails.getName());
+
+    List<OzoneKeyLocation> keyLocations = keyDetails.getOzoneKeyLocations();
+    Assert.assertEquals(1, keyLocations.size());
+    Assert.assertEquals(containerID, keyLocations.get(0).getContainerID());
+    Assert.assertEquals(localID, keyLocations.get(0).getLocalID());
+
+    // Make sure that the data size matched.
+    Assert
+        .assertEquals(value.getBytes().length, keyLocations.get(0).getLength());
+
+    ContainerWithPipeline container =
+        cluster.getStorageContainerManager().getContainerManager()
+            .getContainerWithPipeline(new ContainerID(containerID));
+    Pipeline pipeline = container.getPipeline();
+    List<DatanodeDetails> datanodes = pipeline.getNodes();
+
+    DatanodeDetails datanodeDetails = datanodes.get(0);
+    Assert.assertNotNull(datanodeDetails);
+
+    XceiverClientSpi clientSpi = manager.acquireClient(pipeline);
+    Assert.assertTrue(clientSpi instanceof XceiverClientRatis);
+    XceiverClientRatis ratisClient = (XceiverClientRatis)clientSpi;
+
+    ratisClient.watchForCommit(keyInfo.getBlockCommitSequenceId(), 5000);
+    // shutdown the datanode
+    cluster.shutdownHddsDatanode(datanodeDetails);
+
+    Assert.assertTrue(container.getContainerInfo().getState()
+        == HddsProtos.LifeCycleState.OPEN);
+    // try to read, this shouls be successful
+    readKey(bucket, keyName, value);
+
+    Assert.assertTrue(container.getContainerInfo().getState()
+        == HddsProtos.LifeCycleState.OPEN);
+    // shutdown the second datanode
+    datanodeDetails = datanodes.get(1);
+    cluster.shutdownHddsDatanode(datanodeDetails);
+    Assert.assertTrue(container.getContainerInfo().getState()
+        == HddsProtos.LifeCycleState.OPEN);
+
+    // the container is open and with loss of 2 nodes we still should be able
+    // to read via Standalone protocol
+    // try to read
+    readKey(bucket, keyName, value);
+
+    // shutdown the 3rd datanode
+    datanodeDetails = datanodes.get(2);
+    cluster.shutdownHddsDatanode(datanodeDetails);
+    try {
+      // try to read
+      readKey(bucket, keyName, value);
+      Assert.fail("Expected exception not thrown");
+    } catch (IOException e) {
+      Assert.assertTrue(e.getMessage().contains("Failed to execute command"));
+      Assert.assertTrue(
+          e.getMessage().contains("on the pipeline " + pipeline.getId()));
+    }
+    manager.releaseClient(clientSpi);
+  }
+
+  private void readKey(OzoneBucket bucket, String keyName, String data)
+      throws IOException {
+    OzoneKey key = bucket.getKey(keyName);
+    Assert.assertEquals(keyName, key.getName());
+    OzoneInputStream is = bucket.readKey(keyName);
+    byte[] fileContent = new byte[data.getBytes().length];
+    is.read(fileContent);
+    is.close();
+  }
+
+  @Test
   public void testGetKeyDetails() throws IOException, OzoneException {
     String volumeName = UUID.randomUUID().toString();
     String bucketName = UUID.randomUUID().toString();
@@ -580,9 +751,10 @@ public class TestOzoneRpcClient {
     // Second, sum the data size from chunks in Container via containerID
     // and localID, make sure the size equals to the size from keyDetails.
     Pipeline pipeline = cluster.getStorageContainerManager()
-        .getContainerManager().getContainerWithPipeline(containerID)
+        .getContainerManager().getContainerWithPipeline(
+            ContainerID.valueof(containerID))
         .getPipeline();
-    List<DatanodeDetails> datanodes = pipeline.getMachines();
+    List<DatanodeDetails> datanodes = pipeline.getNodes();
     Assert.assertEquals(datanodes.size(), 1);
 
     DatanodeDetails datanodeDetails = datanodes.get(0);

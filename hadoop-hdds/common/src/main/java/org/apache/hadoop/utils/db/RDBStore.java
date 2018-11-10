@@ -20,10 +20,12 @@
 package org.apache.hadoop.utils.db;
 
 import com.google.common.base.Preconditions;
+import org.apache.hadoop.hdds.HddsUtils;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.metrics2.util.MBeans;
 import org.apache.hadoop.utils.RocksDBStoreMBean;
-import org.apache.ratis.shaded.com.google.common.annotations.VisibleForTesting;
+import org.apache.ratis.thirdparty.com.google.common.annotations.
+    VisibleForTesting;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 
@@ -91,7 +93,8 @@ public class RDBStore implements DBStore {
       if (dbOptions.statistics() != null) {
         Map<String, String> jmxProperties = new HashMap<>();
         jmxProperties.put("dbName", dbFile.getName());
-        statMBeanName = MBeans.register("Ozone", "RocksDbStore", jmxProperties,
+        statMBeanName = HddsUtils.registerWithJmxProperties(
+            "Ozone", "RocksDbStore", jmxProperties,
             new RocksDBStoreMBean(dbOptions.statistics()));
         if (statMBeanName == null) {
           LOG.warn("jmx registration failed during RocksDB init, db path :{}",

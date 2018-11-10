@@ -19,8 +19,11 @@ package org.apache.hadoop.fs.http.server;
 
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
+import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
+import org.apache.hadoop.hdfs.protocol.SnapshottableDirectoryStatus;
 import org.apache.hadoop.hdfs.web.JsonUtil;
+import org.apache.hadoop.lib.service.FileSystemAccess;
 import org.apache.hadoop.security.authentication.util.SignerSecretProvider;
 import org.apache.hadoop.security.authentication.util.StringSignerSecretProviderCreator;
 import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier;
@@ -198,8 +201,24 @@ public class TestHttpFSServer extends HFSTestCase {
     return conf;
   }
 
-  private void createHttpFSServer(boolean addDelegationTokenAuthHandler,
-                                  boolean sslEnabled)
+  /**
+   * Write configuration to a site file under Hadoop configuration dir.
+   */
+  private void writeConf(Configuration conf, String sitename)
+      throws Exception {
+    File homeDir = TestDirHelper.getTestDir();
+    // HDFS configuration
+    File hadoopConfDir = new File(new File(homeDir, "conf"), "hadoop-conf");
+    Assert.assertTrue(hadoopConfDir.exists());
+
+    File siteFile = new File(hadoopConfDir, sitename);
+    OutputStream os = new FileOutputStream(siteFile);
+    conf.writeXml(os);
+    os.close();
+  }
+
+  private Server createHttpFSServer(boolean addDelegationTokenAuthHandler,
+                                    boolean sslEnabled)
       throws Exception {
     Configuration conf = createHttpFSConf(addDelegationTokenAuthHandler,
                                           sslEnabled);
@@ -212,6 +231,7 @@ public class TestHttpFSServer extends HFSTestCase {
     if (addDelegationTokenAuthHandler) {
       HttpFSServerWebApp.get().setAuthority(TestJettyHelper.getAuthority());
     }
+    return server;
   }
 
   private String getSignedTokenString()
@@ -894,6 +914,48 @@ public class TestHttpFSServer extends HFSTestCase {
   @TestDir
   @TestJetty
   @TestHdfs
+  public void testCustomizedUserAndGroupNames() throws Exception {
+    // Start server with default configuration
+    Server server = createHttpFSServer(false, false);
+    final Configuration conf = HttpFSServerWebApp.get()
+        .get(FileSystemAccess.class).getFileSystemConfiguration();
+    // Change pattern config
+    conf.set(HdfsClientConfigKeys.DFS_WEBHDFS_USER_PATTERN_KEY,
+        "^[A-Za-z0-9_][A-Za-z0-9._-]*[$]?$");
+    conf.set(HdfsClientConfigKeys.DFS_WEBHDFS_ACL_PERMISSION_PATTERN_KEY,
+        "^(default:)?(user|group|mask|other):" +
+            "[[0-9A-Za-z_][@A-Za-z0-9._-]]*:([rwx-]{3})?(,(default:)?" +
+            "(user|group|mask|other):[[0-9A-Za-z_][@A-Za-z0-9._-]]*:" +
+            "([rwx-]{3})?)*$");
+    // Save configuration to site file
+    writeConf(conf, "hdfs-site.xml");
+    // Restart the HttpFS server to apply new config
+    server.stop();
+    server.start();
+
+    final String aclUser = "user:123:rw-";
+    final String aclGroup = "group:foo@bar:r--";
+    final String aclSpec = "aclspec=user::rwx," + aclUser + ",group::rwx," +
+        aclGroup + ",other::---";
+    final String dir = "/aclFileTestCustom";
+    final String path = dir + "/test";
+    // Create test dir
+    FileSystem fs = FileSystem.get(conf);
+    fs.mkdirs(new Path(dir));
+    createWithHttp(path, null);
+    // Set ACL
+    putCmd(path, "SETACL", aclSpec);
+    // Verify ACL
+    String statusJson = getStatus(path, "GETACLSTATUS");
+    List<String> aclEntries = getAclEntries(statusJson);
+    Assert.assertTrue(aclEntries.contains(aclUser));
+    Assert.assertTrue(aclEntries.contains(aclGroup));
+  }
+
+  @Test
+  @TestDir
+  @TestJetty
+  @TestHdfs
   public void testOpenOffsetLength() throws Exception {
     createHttpFSServer(false, false);
 
@@ -1399,5 +1461,57 @@ public class TestHttpFSServer extends HFSTestCase {
     Assert.assertNotEquals(conn.getResponseCode(), HttpURLConnection.HTTP_OK);
     // Clean up
     dfs.delete(path, true);
+  }
+
+  private void verifyGetSnapshottableDirectoryList(DistributedFileSystem dfs)
+      throws Exception {
+    // Send a request
+    HttpURLConnection conn = sendRequestToHttpFSServer("/",
+        "GETSNAPSHOTTABLEDIRECTORYLIST", "");
+    // Should return HTTP_OK
+    Assert.assertEquals(conn.getResponseCode(), HttpURLConnection.HTTP_OK);
+    // Verify the response
+    BufferedReader reader =
+        new BufferedReader(new InputStreamReader(conn.getInputStream()));
+    // The response should be a one-line JSON string.
+    String dirLst = reader.readLine();
+    // Verify the content of diff with DFS API.
+    SnapshottableDirectoryStatus[] dfsDirLst = dfs.getSnapshottableDirListing();
+    Assert.assertEquals(dirLst, JsonUtil.toJsonString(dfsDirLst));
+  }
+
+  @Test
+  @TestDir
+  @TestJetty
+  @TestHdfs
+  public void testGetSnapshottableDirectoryList() throws Exception {
+    createHttpFSServer(false, false);
+    // Create test directories
+    String pathStr1 = "/tmp/tmp-snap-dirlist-test-1";
+    createDirWithHttp(pathStr1, "700", null);
+    Path path1 = new Path(pathStr1);
+    String pathStr2 = "/tmp/tmp-snap-dirlist-test-2";
+    createDirWithHttp(pathStr2, "700", null);
+    Path path2 = new Path(pathStr2);
+    DistributedFileSystem dfs = (DistributedFileSystem) FileSystem.get(
+        path1.toUri(), TestHdfsHelper.getHdfsConf());
+    // Verify response when there is no snapshottable directory
+    verifyGetSnapshottableDirectoryList(dfs);
+    // Enable snapshot for path1
+    dfs.allowSnapshot(path1);
+    Assert.assertTrue(dfs.getFileStatus(path1).isSnapshotEnabled());
+    // Verify response when there is one snapshottable directory
+    verifyGetSnapshottableDirectoryList(dfs);
+    // Enable snapshot for path2
+    dfs.allowSnapshot(path2);
+    Assert.assertTrue(dfs.getFileStatus(path2).isSnapshotEnabled());
+    // Verify response when there are two snapshottable directories
+    verifyGetSnapshottableDirectoryList(dfs);
+
+    // Clean up and verify
+    dfs.delete(path2, true);
+    verifyGetSnapshottableDirectoryList(dfs);
+    dfs.delete(path1, true);
+    verifyGetSnapshottableDirectoryList(dfs);
   }
 }

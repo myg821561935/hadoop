@@ -66,6 +66,14 @@ public class BlockData {
     this.size = 0;
   }
 
+  public long getBlockCommitSequenceId() {
+    return blockID.getBlockCommitSequenceId();
+  }
+
+  public void setBlockCommitSequenceId(long blockCommitSequenceId) {
+    this.blockID.setBlockCommitSequenceId(blockCommitSequenceId);
+  }
+
   /**
    * Returns a blockData object from the protobuf data.
    *

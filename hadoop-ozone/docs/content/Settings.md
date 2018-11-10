@@ -43,7 +43,7 @@ requests blocks from SCM, to which clients can write data.
 
 ## Setting up an Ozone only cluster
 
-* Please untar the  ozone-0.2.1-SNAPSHOT to the directory where you are going
+* Please untar the ozone-<version> to the directory where you are going
 to run Ozone from. We need Ozone jars on all machines in the cluster. So you
 need to do this on all machines in the cluster.
 
@@ -56,9 +56,9 @@ the specified path (directory).
 ozone genconf <path>
 {{< /highlight >}}
 
-Let us look at the settings inside the generated file (ozone-site.xml)  and
+Let us look at the settings inside the generated file (ozone-site.xml) and
 how they control ozone. Once the right values are defined, this file
-needs to be copied to ```ozone directory/etc/Hadoop```.
+needs to be copied to ```ozone directory/etc/hadoop```.
 
 
 * **ozone.enabled** This is the most critical setting for ozone.

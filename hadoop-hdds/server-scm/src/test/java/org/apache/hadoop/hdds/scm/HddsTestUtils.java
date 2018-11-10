@@ -22,7 +22,7 @@ import java.util.List;
 import org.apache.commons.lang3.RandomUtils;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos;
-import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerInfo;
+import org.apache.hadoop.hdds.scm.container.ContainerInfo;
 import org.apache.hadoop.hdds.scm.server.SCMDatanodeProtocolServer
     .NodeRegistrationContainerReport;
 
@@ -55,7 +55,7 @@ public final class HddsTestUtils {
    */
   public static NodeRegistrationContainerReport
       createNodeRegistrationContainerReport(List<ContainerInfo> dnContainers) {
-    List<StorageContainerDatanodeProtocolProtos.ContainerInfo>
+    List<StorageContainerDatanodeProtocolProtos.ContainerReplicaProto>
         containers = new ArrayList<>();
     dnContainers.forEach(c -> {
       containers.add(TestUtils.getRandomContainerInfo(c.getContainerID()));

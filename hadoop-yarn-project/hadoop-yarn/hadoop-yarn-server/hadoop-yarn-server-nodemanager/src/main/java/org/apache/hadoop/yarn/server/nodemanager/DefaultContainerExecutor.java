@@ -20,6 +20,10 @@ package org.apache.hadoop.yarn.server.nodemanager;
 
 import static org.apache.hadoop.fs.CreateFlag.CREATE;
 import static org.apache.hadoop.fs.CreateFlag.OVERWRITE;
+
+import org.apache.hadoop.hdfs.protocol.datatransfer.IOStreamPair;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.runtime.ContainerExecutionException;
+import org.apache.hadoop.yarn.server.nodemanager.executor.ContainerExecContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,6 +46,7 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.UnsupportedFileSystemException;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.service.ServiceStateException;
 import org.apache.hadoop.util.Shell;
 import org.apache.hadoop.util.Shell.CommandExecutor;
 import org.apache.hadoop.util.Shell.ExitCodeException;
@@ -214,6 +219,8 @@ public class DefaultContainerExecutor extends ContainerExecutor {
     Container container = ctx.getContainer();
     Path nmPrivateContainerScriptPath = ctx.getNmPrivateContainerScriptPath();
     Path nmPrivateTokensPath = ctx.getNmPrivateTokensPath();
+    Path nmPrivateKeystorePath = ctx.getNmPrivateKeystorePath();
+    Path nmPrivateTruststorePath = ctx.getNmPrivateTruststorePath();
     String user = ctx.getUser();
     Path containerWorkDir = ctx.getContainerWorkDir();
     List<String> localDirs = ctx.getLocalDirs();
@@ -248,6 +255,18 @@ public class DefaultContainerExecutor extends ContainerExecutor {
     Path tokenDst =
       new Path(containerWorkDir, ContainerLaunch.FINAL_CONTAINER_TOKENS_FILE);
     copyFile(nmPrivateTokensPath, tokenDst, user);
+
+    if (nmPrivateKeystorePath != null) {
+      Path keystoreDst =
+          new Path(containerWorkDir, ContainerLaunch.KEYSTORE_FILE);
+      copyFile(nmPrivateKeystorePath, keystoreDst, user);
+    }
+
+    if (nmPrivateTruststorePath != null) {
+      Path truststoreDst =
+          new Path(containerWorkDir, ContainerLaunch.TRUSTSTORE_FILE);
+      copyFile(nmPrivateTruststorePath, truststoreDst, user);
+    }
 
     // copy launch script to work dir
     Path launchDst =
@@ -997,6 +1016,18 @@ public class DefaultContainerExecutor extends ContainerExecutor {
   }
 
   /**
+   *
+   * @param ctx Encapsulates information necessary for exec containers.
+   * @return the input/output stream of interactive docker shell.
+   * @throws ContainerExecutionException
+   */
+  @Override
+  public IOStreamPair execContainer(ContainerExecContext ctx)
+      throws ContainerExecutionException {
+    return null;
+  }
+
+  /**
    * Return the list of paths of given local directories.
    *
    * @return the list of paths of given local directories
@@ -1007,5 +1038,11 @@ public class DefaultContainerExecutor extends ContainerExecutor {
       paths.add(new Path(dirs.get(i)));
     }
     return paths;
+  }
+
+  @Override
+  public void updateYarnSysFS(Context ctx, String user,
+      String appId, String spec) throws IOException {
+    throw new ServiceStateException("Implementation unavailable");
   }
 }

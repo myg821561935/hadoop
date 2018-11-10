@@ -20,6 +20,7 @@ package org.apache.hadoop.ozone.container.keyvalue;
 
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -32,11 +33,11 @@ import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.client.BlockID;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
+    .ContainerDataProto;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerCommandRequestProto;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerCommandResponseProto;
-import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .ContainerLifeCycleState;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerType;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
@@ -76,25 +77,10 @@ import org.apache.hadoop.util.ReflectionUtils;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.protobuf.ByteString;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import static org.apache.hadoop.hdds.HddsConfigKeys
     .HDDS_DATANODE_VOLUME_CHOOSING_POLICY;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.BLOCK_NOT_COMMITTED;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.CLOSED_CONTAINER_IO;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.CONTAINER_INTERNAL_ERROR;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.DELETE_ON_OPEN_CONTAINER;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.GET_SMALL_FILE_ERROR;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.INVALID_CONTAINER_STATE;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.IO_EXCEPTION;
-import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .Result.PUT_SMALL_FILE_ERROR;
+import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.Result.*;
 import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .Stage;
 import static org.apache.hadoop.ozone.OzoneConfigKeys
@@ -256,9 +242,12 @@ public class KeyValueHandler extends Handler {
         newContainer.create(volumeSet, volumeChoosingPolicy, scmID);
         containerSet.addContainer(newContainer);
       } else {
-        throw new StorageContainerException("Container already exists with " +
-            "container Id " + containerID, ContainerProtos.Result
-            .CONTAINER_EXISTS);
+
+        // The create container request for an already existing container can
+        // arrive in case the ContainerStateMachine reapplies the transaction
+        // on datanode restart. Just log a warning msg here.
+        LOG.warn("Container already exists." +
+            "container Id " + containerID);
       }
     } catch (StorageContainerException ex) {
       return ContainerUtils.logAndReturnError(LOG, ex, request);
@@ -385,6 +374,7 @@ public class KeyValueHandler extends Handler {
 
   /**
    * Handles Close Container Request. An open container is closed.
+   * Close Container call is idempotent.
    */
   ContainerCommandResponseProto handleCloseContainer(
       ContainerCommandRequestProto request, KeyValueContainer kvContainer) {
@@ -396,13 +386,13 @@ public class KeyValueHandler extends Handler {
     }
 
     long containerID = kvContainer.getContainerData().getContainerID();
-    ContainerLifeCycleState containerState = kvContainer.getContainerState();
+    ContainerDataProto.State containerState = kvContainer.getContainerState();
 
     try {
-      if (containerState == ContainerLifeCycleState.CLOSED) {
+      if (containerState == ContainerDataProto.State .CLOSED) {
         LOG.debug("Container {} is already closed.", containerID);
         return ContainerUtils.getSuccessResponse(request);
-      } else if (containerState == ContainerLifeCycleState.INVALID) {
+      } else if (containerState == ContainerDataProto.State .INVALID) {
         LOG.debug("Invalid container data. ContainerID: {}", containerID);
         throw new StorageContainerException("Invalid container data. " +
             "ContainerID: " + containerID, INVALID_CONTAINER_STATE);
@@ -412,7 +402,7 @@ public class KeyValueHandler extends Handler {
 
       // remove the container from open block map once, all the blocks
       // have been committed and the container is closed
-      kvData.setState(ContainerProtos.ContainerLifeCycleState.CLOSING);
+      kvData.setState(ContainerDataProto.State.CLOSING);
       commitPendingBlocks(kvContainer);
       kvContainer.close();
       // make sure the the container open keys from BlockMap gets removed
@@ -663,10 +653,10 @@ public class KeyValueHandler extends Handler {
       ChunkInfo chunkInfo = ChunkInfo.getFromProtoBuf(chunkInfoProto);
       Preconditions.checkNotNull(chunkInfo);
 
-      byte[] data = null;
+      ByteBuffer data = null;
       if (request.getWriteChunk().getStage() == Stage.WRITE_DATA ||
           request.getWriteChunk().getStage() == Stage.COMBINED) {
-        data = request.getWriteChunk().getData().toByteArray();
+        data = request.getWriteChunk().getData().asReadOnlyByteBuffer();
       }
 
       chunkManager.writeChunk(kvContainer, blockID, chunkInfo, data,
@@ -724,7 +714,7 @@ public class KeyValueHandler extends Handler {
       ChunkInfo chunkInfo = ChunkInfo.getFromProtoBuf(
           putSmallFileReq.getChunkInfo());
       Preconditions.checkNotNull(chunkInfo);
-      byte[] data = putSmallFileReq.getData().toByteArray();
+      ByteBuffer data = putSmallFileReq.getData().asReadOnlyByteBuffer();
       // chunks will be committed as a part of handling putSmallFile
       // here. There is no need to maintain this info in openContainerBlockMap.
       chunkManager.writeChunk(
@@ -733,8 +723,9 @@ public class KeyValueHandler extends Handler {
       List<ContainerProtos.ChunkInfo> chunks = new LinkedList<>();
       chunks.add(chunkInfo.getProtoBufMessage());
       blockData.setChunks(chunks);
+      // TODO: add bcsId as a part of putSmallFile transaction
       blockManager.putBlock(kvContainer, blockData);
-      metrics.incContainerBytesStats(Type.PutSmallFile, data.length);
+      metrics.incContainerBytesStats(Type.PutSmallFile, data.capacity());
 
     } catch (StorageContainerException ex) {
       return ContainerUtils.logAndReturnError(LOG, ex, request);
@@ -806,9 +797,9 @@ public class KeyValueHandler extends Handler {
   private void checkContainerOpen(KeyValueContainer kvContainer)
       throws StorageContainerException {
 
-    ContainerLifeCycleState containerState = kvContainer.getContainerState();
+    ContainerDataProto.State containerState = kvContainer.getContainerState();
 
-    if (containerState == ContainerLifeCycleState.OPEN) {
+    if (containerState == ContainerDataProto.State.OPEN) {
       return;
     } else {
       String msg = "Requested operation not allowed as ContainerState is " +
@@ -818,6 +809,9 @@ public class KeyValueHandler extends Handler {
       case CLOSING:
       case CLOSED:
         result = CLOSED_CONTAINER_IO;
+        break;
+      case UNHEALTHY:
+        result = CONTAINER_UNHEALTHY;
         break;
       case INVALID:
         result = INVALID_CONTAINER_STATE;

@@ -1606,6 +1606,28 @@ public class YarnConfiguration extends Configuration {
       NM_PREFIX + "resource-plugins";
 
   /**
+   * This setting controls if pluggable device plugin framework is enabled.
+   * */
+  @Private
+  public static final String NM_PLUGGABLE_DEVICE_FRAMEWORK_ENABLED =
+      NM_PREFIX + "pluggable-device-framework.enabled";
+
+  /**
+   * The pluggable device plugin framework is disabled by default
+   * */
+  @Private
+  public static final boolean DEFAULT_NM_PLUGGABLE_DEVICE_FRAMEWORK_ENABLED =
+      false;
+
+  /**
+   * This setting contains vendor plugin class names for
+   * device plugin framework to load. Split by comma
+   * */
+  @Private
+  public static final String NM_PLUGGABLE_DEVICE_FRAMEWORK_DEVICE_CLASSES =
+      NM_PREFIX + "pluggable-device-framework.device-classes";
+
+  /**
    * Prefix for gpu configurations. Work in progress: This configuration
    * parameter may be changed/removed in the future.
    */
@@ -1647,7 +1669,7 @@ public class YarnConfiguration extends Configuration {
       NVIDIA_DOCKER_V1;
 
   /**
-   * This setting controls end point of nvidia-docker-v1 plugin
+   * This setting controls end point of nvidia-docker-v1 plugin.
    */
   @Private
   public static final String NVIDIA_DOCKER_PLUGIN_V1_ENDPOINT =
@@ -2130,6 +2152,26 @@ public class YarnConfiguration extends Configuration {
 
   public static final long DEFAULT_RM_APPLICATION_MONITOR_INTERVAL_MS =
       3000;
+
+  /**
+   * Specifies what the RM does regarding HTTPS enforcement for communication
+   * with AM Web Servers, as well as generating and providing certificates.
+   * Possible values are:
+   * <ul>
+   *   <li>NONE - the RM will do nothing special.</li>
+   *   <li>LENIENT - the RM will generate and provide a keystore and truststore
+   *   to the AM, which it is free to use for HTTPS in its tracking URL web
+   *   server.  The RM proxy will still allow HTTP connections to AMs that opt
+   *   not to use HTTPS.</li>
+   *   <li>STRICT - this is the same as LENIENT, except that the RM proxy will
+   *   only allow HTTPS connections to AMs; HTTP connections will be blocked
+   *   and result in a warning page to the user.</li>
+   * </ul>
+   */
+  public static final String RM_APPLICATION_HTTPS_POLICY =
+      RM_PREFIX + "application-https.policy";
+
+  public static final String DEFAULT_RM_APPLICATION_HTTPS_POLICY = "NONE";
 
   /**
    * Interval of time the linux container executor should try cleaning up

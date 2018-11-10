@@ -21,6 +21,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.protobuf.BlockingService;
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.hdds.HddsUtils;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
@@ -107,7 +108,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
 
   private static final String USAGE =
       "Usage: \n ozone om [genericOptions] " + "[ "
-          + StartupOption.CREATEOBJECTSTORE.getName() + " ]\n " + "ozone om [ "
+          + StartupOption.INIT.getName() + " ]\n " + "ozone om [ "
           + StartupOption.HELP.getName() + " ]\n";
   private final OzoneConfiguration configuration;
   private final RPC.Server omRpcServer;
@@ -122,6 +123,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
   private final ScmBlockLocationProtocol scmBlockClient;
   private final StorageContainerLocationProtocol scmContainerClient;
   private ObjectName omInfoBeanName;
+  private final S3BucketManager s3BucketManager;
 
   private OzoneManager(OzoneConfiguration conf) throws IOException {
     Preconditions.checkNotNull(conf);
@@ -159,6 +161,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     metadataManager = new OmMetadataManagerImpl(configuration);
     volumeManager = new VolumeManagerImpl(metadataManager, configuration);
     bucketManager = new BucketManagerImpl(metadataManager);
+    s3BucketManager = new S3BucketManagerImpl(configuration, metadataManager,
+        volumeManager, bucketManager);
     metrics = OMMetrics.create();
     keyManager =
         new KeyManagerImpl(scmBlockClient, metadataManager, configuration,
@@ -315,7 +319,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
       return null;
     }
     switch (startOpt) {
-    case CREATEOBJECTSTORE:
+    case INIT:
       if (printBanner) {
         StringUtils.startupShutdownMessage(OzoneManager.class, argv, LOG);
       }
@@ -344,8 +348,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
    * @throws IOException in case ozone metadata directory path is not
    *                     accessible
    */
-
-  private static boolean omInit(OzoneConfiguration conf) throws IOException {
+  @VisibleForTesting
+  static boolean omInit(OzoneConfiguration conf) throws IOException {
     OMStorage omStorage = new OMStorage(conf);
     StorageState state = omStorage.getState();
     if (state != StorageState.INITIALIZED) {
@@ -1038,13 +1042,10 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
   }
 
   private void registerMXBean() {
-    Map<String, String> jmxProperties = new HashMap<String, String>();
+    Map<String, String> jmxProperties = new HashMap<>();
     jmxProperties.put("component", "ServerRuntime");
-    this.omInfoBeanName =
-        MBeans.register("OzoneManager",
-            "OzoneManagerInfo",
-            jmxProperties,
-            this);
+    this.omInfoBeanName = HddsUtils.registerWithJmxProperties(
+        "OzoneManager", "OzoneManagerInfo", jmxProperties, this);
   }
 
   private void unregisterMXBean() {
@@ -1128,13 +1129,42 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     return services;
   }
 
+  @Override
+  /**
+   * {@inheritDoc}
+   */
+  public void createS3Bucket(String userName, String s3BucketName)
+      throws IOException {
+    s3BucketManager.createS3Bucket(userName, s3BucketName);
+  }
+
+  @Override
+  /**
+   * {@inheritDoc}
+   */
+  public void deleteS3Bucket(String s3BucketName)
+      throws IOException {
+    s3BucketManager.deleteS3Bucket(s3BucketName);
+  }
+
+  @Override
+  /**
+   * {@inheritDoc}
+   */
+  public String getOzoneBucketMapping(String s3BucketName)
+      throws IOException {
+    return s3BucketManager.getOzoneBucketMapping(s3BucketName);
+  }
+
+
+
   /**
    * Startup options.
    */
   public enum StartupOption {
-    CREATEOBJECTSTORE("-createObjectStore"),
-    HELP("-help"),
-    REGULAR("-regular");
+    INIT("--init"),
+    HELP("--help"),
+    REGULAR("--regular");
 
     private final String name;
 

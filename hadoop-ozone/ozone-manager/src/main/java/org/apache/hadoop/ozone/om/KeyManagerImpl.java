@@ -17,6 +17,7 @@
 package org.apache.hadoop.ozone.om;
 
 import com.google.common.base.Preconditions;
+import org.apache.hadoop.hdds.client.BlockID;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationType;
@@ -169,8 +170,7 @@ public class KeyManagerImpl implements KeyManager {
       throw ex;
     }
     OmKeyLocationInfo info = new OmKeyLocationInfo.Builder()
-        .setBlockID(allocatedBlock.getBlockID())
-        .setShouldCreateContainer(allocatedBlock.getCreateContainer())
+        .setBlockID(new BlockID(allocatedBlock.getBlockID()))
         .setLength(scmBlockSize)
         .setOffset(0)
         .build();
@@ -233,8 +233,7 @@ public class KeyManagerImpl implements KeyManager {
           throw ex;
         }
         OmKeyLocationInfo subKeyInfo = new OmKeyLocationInfo.Builder()
-            .setBlockID(allocatedBlock.getBlockID())
-            .setShouldCreateContainer(allocatedBlock.getCreateContainer())
+            .setBlockID(new BlockID(allocatedBlock.getBlockID()))
             .setLength(allocateSize)
             .setOffset(0)
             .build();
@@ -368,7 +367,7 @@ public class KeyManagerImpl implements KeyManager {
       }
       return OmKeyInfo.getFromProtobuf(KeyInfo.parseFrom(value));
     } catch (IOException ex) {
-      LOG.error("Get key failed for volume:{} bucket:{} key:{}",
+      LOG.debug("Get key failed for volume:{} bucket:{} key:{}",
           volumeName, bucketName, keyName, ex);
       throw new OMException(ex.getMessage(),
           OMException.ResultCodes.FAILED_KEY_NOT_FOUND);
@@ -409,10 +408,6 @@ public class KeyManagerImpl implements KeyManager {
 
       // A rename is a no-op if the target and source name is same.
       // TODO: Discuss if we need to throw?.
-      // TODO: Define the semantics of rename more clearly. Today this code
-      // will allow rename of a Key across volumes. This should *not* be
-      // allowed. The documentation of Ozone says that rename is permitted only
-      // within a volume.
       if (fromKeyName.equals(toKeyName)) {
         return;
       }

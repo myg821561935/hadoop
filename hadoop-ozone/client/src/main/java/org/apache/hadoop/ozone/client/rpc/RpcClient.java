@@ -21,7 +21,7 @@ package org.apache.hadoop.ozone.client.rpc;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
-import org.apache.hadoop.fs.StorageType;
+import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.hdds.scm.client.HddsClientUtils;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.retry.RetryPolicy;
@@ -65,6 +65,7 @@ import org.apache.hadoop.hdds.scm.protocolPB
 import org.apache.hadoop.hdds.scm.protocolPB
     .StorageContainerLocationProtocolPB;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.logging.log4j.util.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -536,7 +537,8 @@ public class RpcClient implements ClientProtocol {
         key.getKeyName(),
         key.getDataSize(),
         key.getCreationTime(),
-        key.getModificationTime()))
+        key.getModificationTime(),
+        ReplicationType.valueOf(key.getType().toString())))
         .collect(Collectors.toList());
   }
 
@@ -558,13 +560,49 @@ public class RpcClient implements ClientProtocol {
     keyInfo.getLatestVersionLocations().getBlocksLatestVersionOnly().forEach(
         (a) -> ozoneKeyLocations.add(new OzoneKeyLocation(a.getContainerID(),
             a.getLocalID(), a.getLength(), a.getOffset())));
-    return new OzoneKeyDetails(keyInfo.getVolumeName(),
-                        keyInfo.getBucketName(),
-                        keyInfo.getKeyName(),
-                        keyInfo.getDataSize(),
-                        keyInfo.getCreationTime(),
-                        keyInfo.getModificationTime(),
-                        ozoneKeyLocations);
+    return new OzoneKeyDetails(keyInfo.getVolumeName(), keyInfo.getBucketName(),
+        keyInfo.getKeyName(), keyInfo.getDataSize(), keyInfo.getCreationTime(),
+        keyInfo.getModificationTime(), ozoneKeyLocations, ReplicationType
+        .valueOf(keyInfo.getType().toString()));
+  }
+
+  @Override
+  public void createS3Bucket(String userName, String s3BucketName)
+      throws IOException {
+    Preconditions.checkArgument(Strings.isNotBlank(userName), "user name " +
+        "cannot be null or empty.");
+
+    Preconditions.checkArgument(Strings.isNotBlank(s3BucketName), "bucket " +
+        "name cannot be null or empty.");
+    ozoneManagerClient.createS3Bucket(userName, s3BucketName);
+  }
+
+  @Override
+  public void deleteS3Bucket(String s3BucketName)
+      throws IOException {
+    Preconditions.checkArgument(Strings.isNotBlank(s3BucketName), "bucket " +
+        "name cannot be null or empty.");
+    ozoneManagerClient.deleteS3Bucket(s3BucketName);
+  }
+
+  @Override
+  public String getOzoneBucketMapping(String s3BucketName) throws IOException {
+    Preconditions.checkArgument(Strings.isNotBlank(s3BucketName), "bucket " +
+        "name cannot be null or empty.");
+    return ozoneManagerClient.getOzoneBucketMapping(s3BucketName);
+  }
+
+  @Override
+  public String getOzoneVolumeName(String s3BucketName) throws IOException {
+    String mapping = getOzoneBucketMapping(s3BucketName);
+    return mapping.split("/")[0];
+
+  }
+
+  @Override
+  public String getOzoneBucketName(String s3BucketName) throws IOException {
+    String mapping = getOzoneBucketMapping(s3BucketName);
+    return mapping.split("/")[1];
   }
 
   @Override

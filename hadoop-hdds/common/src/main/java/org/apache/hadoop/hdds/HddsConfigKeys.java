@@ -72,7 +72,7 @@ public final class HddsConfigKeys {
 
   // DB Profiles used by ROCKDB instances.
   public static final String HDDS_DB_PROFILE = "hdds.db.profile";
-  public static final DBProfile HDDS_DEFAULT_DB_PROFILE = DBProfile.SSD;
+  public static final DBProfile HDDS_DEFAULT_DB_PROFILE = DBProfile.DISK;
 
   // Once a container usage crosses this threshold, it is eligible for
   // closing.
@@ -97,4 +97,11 @@ public final class HddsConfigKeys {
       "hdds.lock.max.concurrency";
   public static final int HDDS_LOCK_MAX_CONCURRENCY_DEFAULT = 100;
 
+  // This configuration setting is used as a fallback location by all
+  // Ozone/HDDS services for their metadata. It is useful as a single
+  // config point for test/PoC clusters.
+  //
+  // In any real cluster where performance matters, the SCM, OM and DN
+  // metadata locations must be configured explicitly.
+  public static final String OZONE_METADATA_DIRS = "ozone.metadata.dirs";
 }

@@ -24,6 +24,8 @@ import com.google.common.collect.Maps;
 import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.HddsUtils;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
+    .ContainerDataProto;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerAction;
 import org.apache.hadoop.hdds.scm.container.common.helpers.StorageContainerException;
@@ -40,8 +42,6 @@ import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerCommandResponseProto;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerType;
-import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .ContainerLifeCycleState;
 import org.apache.hadoop.ozone.container.common.interfaces.ContainerDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,21 +111,33 @@ public class HddsDispatcher implements ContainerDispatcher {
     ContainerCommandResponseProto responseProto = null;
     long startTime = System.nanoTime();
     ContainerProtos.Type cmdType = msg.getCmdType();
-    try {
-      long containerID = msg.getContainerID();
+    long containerID = msg.getContainerID();
+    metrics.incContainerOpsMetrics(cmdType);
 
-      metrics.incContainerOpsMetrics(cmdType);
-      if (cmdType != ContainerProtos.Type.CreateContainer) {
+    if (cmdType != ContainerProtos.Type.CreateContainer) {
+      container = getContainer(containerID);
+
+      if (container == null && (cmdType == ContainerProtos.Type.WriteChunk
+          || cmdType == ContainerProtos.Type.PutSmallFile)) {
+        // If container does not exist, create one for WriteChunk and
+        // PutSmallFile request
+        createContainer(msg);
         container = getContainer(containerID);
-        containerType = getContainerType(container);
-      } else {
-        if (!msg.hasCreateContainer()) {
-          return ContainerUtils.malformedRequest(msg);
-        }
-        containerType = msg.getCreateContainer().getContainerType();
       }
-    } catch (StorageContainerException ex) {
-      return ContainerUtils.logAndReturnError(LOG, ex, msg);
+
+      // if container not found return error
+      if (container == null) {
+        StorageContainerException sce = new StorageContainerException(
+            "ContainerID " + containerID + " does not exist",
+            ContainerProtos.Result.CONTAINER_NOT_FOUND);
+        return ContainerUtils.logAndReturnError(LOG, sce, msg);
+      }
+      containerType = getContainerType(container);
+    } else {
+      if (!msg.hasCreateContainer()) {
+        return ContainerUtils.malformedRequest(msg);
+      }
+      containerType = msg.getCreateContainer().getContainerType();
     }
     // Small performance optimization. We check if the operation is of type
     // write before trying to send CloseContainerAction.
@@ -142,6 +154,26 @@ public class HddsDispatcher implements ContainerDispatcher {
     responseProto = handler.handle(msg, container);
     if (responseProto != null) {
       metrics.incContainerOpsLatencies(cmdType, System.nanoTime() - startTime);
+
+      // If the request is of Write Type and the container operation
+      // is unsuccessful, it implies the applyTransaction on the container
+      // failed. All subsequent transactions on the container should fail and
+      // hence replica will be marked unhealthy here. In this case, a close
+      // container action will be sent to SCM to close the container.
+      if (!HddsUtils.isReadOnly(msg)
+          && responseProto.getResult() != ContainerProtos.Result.SUCCESS) {
+        // If the container is open and the container operation has failed,
+        // it should be first marked unhealthy and the initiate the close
+        // container action. This also implies this is the first transaction
+        // which has failed, so the container is marked unhealthy right here.
+        // Once container is marked unhealthy, all the subsequent write
+        // transactions will fail with UNHEALTHY_CONTAINER exception.
+        if (container.getContainerState() == ContainerDataProto.State.OPEN) {
+          container.getContainerData()
+              .setState(ContainerDataProto.State.UNHEALTHY);
+          sendCloseContainerActionIfNeeded(container);
+        }
+      }
       return responseProto;
     } else {
       return ContainerUtils.unsupportedRequest(msg);
@@ -149,29 +181,71 @@ public class HddsDispatcher implements ContainerDispatcher {
   }
 
   /**
-   * If the container usage reaches the close threshold we send Close
-   * ContainerAction to SCM.
-   *
+   * Create a container using the input container request.
+   * @param containerRequest - the container request which requires container
+   *                         to be created.
+   */
+  private void createContainer(ContainerCommandRequestProto containerRequest) {
+    ContainerProtos.CreateContainerRequestProto.Builder createRequest =
+        ContainerProtos.CreateContainerRequestProto.newBuilder();
+    ContainerType containerType =
+        ContainerProtos.ContainerType.KeyValueContainer;
+    createRequest.setContainerType(containerType);
+
+    ContainerCommandRequestProto.Builder requestBuilder =
+        ContainerCommandRequestProto.newBuilder()
+            .setCmdType(ContainerProtos.Type.CreateContainer)
+            .setContainerID(containerRequest.getContainerID())
+            .setCreateContainer(createRequest.build())
+            .setDatanodeUuid(containerRequest.getDatanodeUuid())
+            .setTraceID(containerRequest.getTraceID());
+
+    // TODO: Assuming the container type to be KeyValueContainer for now.
+    // We need to get container type from the containerRequest.
+    Handler handler = getHandler(containerType);
+    handler.handle(requestBuilder.build(), null);
+  }
+
+  /**
+   * If the container usage reaches the close threshold or the container is
+   * marked unhealthy we send Close ContainerAction to SCM.
    * @param container current state of container
    */
   private void sendCloseContainerActionIfNeeded(Container container) {
     // We have to find a more efficient way to close a container.
-    Boolean isOpen = Optional.ofNullable(container)
-        .map(cont -> cont.getContainerState() == ContainerLifeCycleState.OPEN)
+    boolean isSpaceFull = isContainerFull(container);
+    boolean shouldClose = isSpaceFull || isContainerUnhealthy(container);
+    if (shouldClose) {
+      ContainerData containerData = container.getContainerData();
+      ContainerAction.Reason reason =
+          isSpaceFull ? ContainerAction.Reason.CONTAINER_FULL :
+              ContainerAction.Reason.CONTAINER_UNHEALTHY;
+      ContainerAction action = ContainerAction.newBuilder()
+          .setContainerID(containerData.getContainerID())
+          .setAction(ContainerAction.Action.CLOSE).setReason(reason).build();
+      context.addContainerActionIfAbsent(action);
+    }
+  }
+
+  private boolean isContainerFull(Container container) {
+    boolean isOpen = Optional.ofNullable(container)
+        .map(cont -> cont.getContainerState() == ContainerDataProto.State.OPEN)
         .orElse(Boolean.FALSE);
     if (isOpen) {
       ContainerData containerData = container.getContainerData();
-      double containerUsedPercentage = 1.0f * containerData.getBytesUsed() /
-          containerData.getMaxSize();
-      if (containerUsedPercentage >= containerCloseThreshold) {
-        ContainerAction action = ContainerAction.newBuilder()
-            .setContainerID(containerData.getContainerID())
-            .setAction(ContainerAction.Action.CLOSE)
-            .setReason(ContainerAction.Reason.CONTAINER_FULL)
-            .build();
-        context.addContainerActionIfAbsent(action);
-      }
+      double containerUsedPercentage =
+          1.0f * containerData.getBytesUsed() / containerData.getMaxSize();
+      return containerUsedPercentage >= containerCloseThreshold;
+    } else {
+      return false;
     }
+  }
+
+  private boolean isContainerUnhealthy(Container container) {
+    return Optional.ofNullable(container).map(
+        cont -> (cont.getContainerState() ==
+            ContainerDataProto.State.UNHEALTHY))
+        .orElse(Boolean.FALSE);
   }
 
   @Override
@@ -191,15 +265,8 @@ public class HddsDispatcher implements ContainerDispatcher {
   }
 
   @VisibleForTesting
-  public Container getContainer(long containerID)
-      throws StorageContainerException {
-    Container container = containerSet.getContainer(containerID);
-    if (container == null) {
-      throw new StorageContainerException(
-          "ContainerID " + containerID + " does not exist",
-          ContainerProtos.Result.CONTAINER_NOT_FOUND);
-    }
-    return container;
+  public Container getContainer(long containerID) {
+    return containerSet.getContainer(containerID);
   }
 
   private ContainerType getContainerType(Container container) {

@@ -38,9 +38,13 @@ import org.apache.hadoop.hdfs.AppendTestUtil;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
+import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
 import org.apache.hadoop.hdfs.protocol.SnapshotException;
+import org.apache.hadoop.hdfs.protocol.SnapshottableDirectoryStatus;
+import org.apache.hadoop.hdfs.web.JsonUtil;
 import org.apache.hadoop.hdfs.web.WebHdfsFileSystem;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -115,6 +119,14 @@ public abstract class BaseTestHttpFSWith extends HFSTestCase {
     conf.set(CommonConfigurationKeysPublic.FS_DEFAULT_NAME_KEY, fsDefaultName);
     conf.setBoolean(DFSConfigKeys.DFS_NAMENODE_ACLS_ENABLED_KEY, true);
     conf.setBoolean(DFSConfigKeys.DFS_NAMENODE_XATTRS_ENABLED_KEY, true);
+    // For BaseTestHttpFSWith#testFileAclsCustomizedUserAndGroupNames
+    conf.set(HdfsClientConfigKeys.DFS_WEBHDFS_USER_PATTERN_KEY,
+        "^[A-Za-z0-9_][A-Za-z0-9._-]*[$]?$");
+    conf.set(HdfsClientConfigKeys.DFS_WEBHDFS_ACL_PERMISSION_PATTERN_KEY,
+        "^(default:)?(user|group|mask|other):" +
+            "[[0-9A-Za-z_][@A-Za-z0-9._-]]*:([rwx-]{3})?(,(default:)?" +
+            "(user|group|mask|other):[[0-9A-Za-z_][@A-Za-z0-9._-]]*:" +
+            "([rwx-]{3})?)*$");
     File hdfsSite = new File(new File(homeDir, "conf"), "hdfs-site.xml");
     OutputStream os = new FileOutputStream(hdfsSite);
     conf.writeXml(os);
@@ -1071,7 +1083,7 @@ public abstract class BaseTestHttpFSWith extends HFSTestCase {
     GETTRASHROOT, STORAGEPOLICY, ERASURE_CODING,
     CREATE_SNAPSHOT, RENAME_SNAPSHOT, DELETE_SNAPSHOT,
     ALLOW_SNAPSHOT, DISALLOW_SNAPSHOT, DISALLOW_SNAPSHOT_EXCEPTION,
-    FILE_STATUS_ATTR, GET_SNAPSHOT_DIFF
+    FILE_STATUS_ATTR, GET_SNAPSHOT_DIFF, GET_SNAPSHOTTABLE_DIRECTORY_LIST
   }
 
   private void operation(Operation op) throws Exception {
@@ -1128,6 +1140,7 @@ public abstract class BaseTestHttpFSWith extends HFSTestCase {
       testContentSummary();
       break;
     case FILEACLS:
+      testFileAclsCustomizedUserAndGroupNames();
       testFileAcls();
       break;
     case DIRACLS:
@@ -1184,6 +1197,9 @@ public abstract class BaseTestHttpFSWith extends HFSTestCase {
     case GET_SNAPSHOT_DIFF:
       testGetSnapshotDiff();
       testGetSnapshotDiffIllegalParam();
+      break;
+    case GET_SNAPSHOTTABLE_DIRECTORY_LIST:
+      testGetSnapshottableDirListing();
       break;
     }
   }
@@ -1528,5 +1544,101 @@ public abstract class BaseTestHttpFSWith extends HFSTestCase {
       // Cleanup
       fs.delete(path, true);
     }
+  }
+
+  private void verifyGetSnapshottableDirListing(
+      FileSystem fs, DistributedFileSystem dfs) throws Exception {
+    // Get snapshottable directory list
+    SnapshottableDirectoryStatus[] sds = null;
+    if (fs instanceof HttpFSFileSystem) {
+      HttpFSFileSystem httpFS = (HttpFSFileSystem) fs;
+      sds = httpFS.getSnapshottableDirectoryList();
+    } else if (fs instanceof WebHdfsFileSystem) {
+      WebHdfsFileSystem webHdfsFileSystem = (WebHdfsFileSystem) fs;
+      sds = webHdfsFileSystem.getSnapshottableDirectoryList();
+    } else {
+      Assert.fail(fs.getClass().getSimpleName() +
+          " doesn't support getSnapshottableDirListing");
+    }
+    // Verify result with DFS
+    SnapshottableDirectoryStatus[] dfssds = dfs.getSnapshottableDirListing();
+    Assert.assertEquals(JsonUtil.toJsonString(sds),
+        JsonUtil.toJsonString(dfssds));
+  }
+
+  private void testGetSnapshottableDirListing() throws Exception {
+    if (!this.isLocalFS()) {
+      FileSystem fs = this.getHttpFSFileSystem();
+      // Create directories with snapshot allowed
+      Path path1 = new Path("/tmp/tmp-snap-dirlist-test-1");
+      DistributedFileSystem dfs = (DistributedFileSystem)
+          FileSystem.get(path1.toUri(), this.getProxiedFSConf());
+      // Verify response when there is no snapshottable directory
+      verifyGetSnapshottableDirListing(fs, dfs);
+      createSnapshotTestsPreconditions(path1);
+      Assert.assertTrue(fs.getFileStatus(path1).isSnapshotEnabled());
+      // Verify response when there is one snapshottable directory
+      verifyGetSnapshottableDirListing(fs, dfs);
+      Path path2 = new Path("/tmp/tmp-snap-dirlist-test-2");
+      createSnapshotTestsPreconditions(path2);
+      Assert.assertTrue(fs.getFileStatus(path2).isSnapshotEnabled());
+      // Verify response when there are two snapshottable directories
+      verifyGetSnapshottableDirListing(fs, dfs);
+
+      // Clean up and verify
+      fs.delete(path2, true);
+      verifyGetSnapshottableDirListing(fs, dfs);
+      fs.delete(path1, true);
+      verifyGetSnapshottableDirListing(fs, dfs);
+    }
+  }
+
+  private void testFileAclsCustomizedUserAndGroupNames() throws Exception {
+    if (isLocalFS()) {
+      return;
+    }
+
+    // Get appropriate conf from the cluster
+    MiniDFSCluster miniDFSCluster = ((TestHdfsHelper) hdfsTestHelper)
+        .getMiniDFSCluster();
+    Configuration conf = miniDFSCluster.getConfiguration(0);
+    // If we call getHttpFSFileSystem() without conf from the mini cluster,
+    // WebHDFS will be initialized with the default ACL string, causing the
+    // setAcl() later to fail. This is only an issue in the unit test.
+    FileSystem httpfs = getHttpFSFileSystem(conf);
+    if (!(httpfs instanceof WebHdfsFileSystem)
+        && !(httpfs instanceof HttpFSFileSystem)) {
+      Assert.fail(httpfs.getClass().getSimpleName() +
+          " doesn't support custom user and group name pattern. "
+          + "Only WebHdfsFileSystem and HttpFSFileSystem support it.");
+    }
+    final String aclUser = "user:123:rwx";
+    final String aclGroup = "group:foo@bar:r--";
+    final String aclSet = "user::rwx," + aclUser + ",group::r--," +
+        aclGroup + ",other::r--";
+    final String dir = "/aclFileTestCustom";
+    // Create test file
+    FileSystem proxyFs = FileSystem.get(conf);
+    proxyFs.mkdirs(new Path(dir));
+    Path path = new Path(dir, "/testACL");
+    OutputStream os = proxyFs.create(path);
+    os.write(1);
+    os.close();
+    // Set ACL
+    httpfs.setAcl(path, AclEntry.parseAclSpec(aclSet, true));
+    // Verify getAclStatus responses are the same
+    AclStatus proxyAclStat = proxyFs.getAclStatus(path);
+    AclStatus httpfsAclStat = httpfs.getAclStatus(path);
+    assertSameAcls(httpfsAclStat, proxyAclStat);
+    assertSameAcls(httpfs, proxyFs, path);
+    // Verify that custom user and group are set.
+    List<String> strEntries = new ArrayList<>();
+    for (AclEntry aclEntry : httpfsAclStat.getEntries()) {
+      strEntries.add(aclEntry.toStringStable());
+    }
+    Assert.assertTrue(strEntries.contains(aclUser));
+    Assert.assertTrue(strEntries.contains(aclGroup));
+    // Clean up
+    proxyFs.delete(new Path(dir), true);
   }
 }

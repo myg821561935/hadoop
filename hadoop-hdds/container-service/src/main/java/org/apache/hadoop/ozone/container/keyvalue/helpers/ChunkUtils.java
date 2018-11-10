@@ -35,7 +35,7 @@ import org.apache.hadoop.ozone.container.common.helpers.ChunkInfo;
 import org.apache.hadoop.ozone.container.common.helpers.ContainerUtils;
 import org.apache.hadoop.ozone.container.keyvalue.KeyValueContainerData;
 import org.apache.hadoop.ozone.container.keyvalue.impl.ChunkManagerImpl;
-import org.apache.ratis.shaded.com.google.protobuf.ByteString;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import org.apache.hadoop.ozone.container.common.volume.VolumeIOStats;
 import org.apache.hadoop.util.Time;
 import org.slf4j.Logger;
@@ -73,15 +73,15 @@ public final class ChunkUtils {
    * @throws StorageContainerException
    */
   public static void writeData(File chunkFile, ChunkInfo chunkInfo,
-                               byte[] data, VolumeIOStats volumeIOStats) throws
-      StorageContainerException, ExecutionException, InterruptedException,
-      NoSuchAlgorithmException {
-
+                               ByteBuffer data, VolumeIOStats volumeIOStats)
+      throws StorageContainerException, ExecutionException,
+      InterruptedException, NoSuchAlgorithmException {
+    int bufferSize = data.capacity();
     Logger log = LoggerFactory.getLogger(ChunkManagerImpl.class);
-    if (data.length != chunkInfo.getLen()) {
+    if (bufferSize != chunkInfo.getLen()) {
       String err = String.format("data array does not match the length " +
               "specified. DataLen: %d Byte Array: %d",
-          chunkInfo.getLen(), data.length);
+          chunkInfo.getLen(), bufferSize);
       log.error(err);
       throw new StorageContainerException(err, INVALID_WRITE_SIZE);
     }
@@ -103,16 +103,16 @@ public final class ChunkUtils {
               StandardOpenOption.SPARSE,
               StandardOpenOption.SYNC);
       lock = file.lock().get();
-      int size = file.write(ByteBuffer.wrap(data), chunkInfo.getOffset()).get();
+      int size = file.write(data, chunkInfo.getOffset()).get();
       // Increment volumeIO stats here.
       volumeIOStats.incWriteTime(Time.monotonicNow() - writeTimeStart);
       volumeIOStats.incWriteOpCount();
       volumeIOStats.incWriteBytes(size);
-      if (size != data.length) {
+      if (size != bufferSize) {
         log.error("Invalid write size found. Size:{}  Expected: {} ", size,
-            data.length);
+            bufferSize);
         throw new StorageContainerException("Invalid write size found. " +
-            "Size: " + size + " Expected: " + data.length, INVALID_WRITE_SIZE);
+            "Size: " + size + " Expected: " + bufferSize, INVALID_WRITE_SIZE);
       }
     } catch (StorageContainerException ex) {
       throw ex;
@@ -138,6 +138,8 @@ public final class ChunkUtils {
         }
       }
     }
+    log.debug("Write Chunk completed for chunkFile: {}, size {}", chunkFile,
+        bufferSize);
   }
 
   /**
@@ -183,7 +185,8 @@ public final class ChunkUtils {
       volumeIOStats.incReadOpCount();
       volumeIOStats.incReadBytes(data.getLen());
       if (data.getChecksum() != null && !data.getChecksum().isEmpty()) {
-        verifyChecksum(data, buf.array(), log);
+        buf.rewind();
+        verifyChecksum(data, buf, log);
       }
       return buf;
     } catch (IOException e) {
@@ -211,10 +214,11 @@ public final class ChunkUtils {
    * @throws NoSuchAlgorithmException
    * @throws StorageContainerException
    */
-  private static void verifyChecksum(ChunkInfo chunkInfo, byte[] data, Logger
-      log) throws NoSuchAlgorithmException, StorageContainerException {
+  private static void verifyChecksum(ChunkInfo chunkInfo, ByteBuffer data,
+      Logger log) throws NoSuchAlgorithmException, StorageContainerException {
     MessageDigest sha = MessageDigest.getInstance(OzoneConsts.FILE_HASH);
     sha.update(data);
+    data.rewind();
     if (!Hex.encodeHexString(sha.digest()).equals(
         chunkInfo.getChecksum())) {
       log.error("Checksum mismatch. Provided: {} , computed: {}",
@@ -231,21 +235,18 @@ public final class ChunkUtils {
    *
    * @param chunkFile - chunkFile to write data into.
    * @param info - chunk info.
-   * @return boolean isOverwrite
-   * @throws StorageContainerException
+   * @return true if the chunkFile exists and chunkOffset < chunkFile length,
+   *         false otherwise.
    */
   public static boolean validateChunkForOverwrite(File chunkFile,
-      ChunkInfo info) throws StorageContainerException {
+      ChunkInfo info) {
 
     Logger log = LoggerFactory.getLogger(ChunkManagerImpl.class);
 
     if (isOverWriteRequested(chunkFile, info)) {
       if (!isOverWritePermitted(info)) {
-        log.error("Rejecting write chunk request. Chunk overwrite " +
+        log.warn("Duplicate write chunk request. Chunk overwrite " +
             "without explicit request. {}", info.toString());
-        throw new StorageContainerException("Rejecting write chunk request. " +
-            "OverWrite flag required." + info.toString(),
-            OVERWRITE_FLAG_REQUIRED);
       }
       return true;
     }

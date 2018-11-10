@@ -28,7 +28,7 @@ import org.apache.hadoop.hdds.scm.XceiverClientManager;
 import org.apache.hadoop.hdds.scm.XceiverClientSpi;
 import org.apache.hadoop.hdds.scm.container.common.helpers.
     ContainerWithPipeline;
-import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.container.common.helpers.
     StorageContainerException;
 import org.apache.hadoop.hdds.scm.container.placement.algorithms.
@@ -91,8 +91,7 @@ public class TestGetCommittedBlockLengthAndPutKey {
             HddsProtos.ReplicationFactor.ONE, containerOwner);
     long containerID = container.getContainerInfo().getContainerID();
     Pipeline pipeline = container.getPipeline();
-    XceiverClientSpi client =
-        xceiverClientManager.acquireClient(pipeline, containerID);
+    XceiverClientSpi client = xceiverClientManager.acquireClient(pipeline);
     //create the container
     ContainerProtocolCalls.createContainer(client, containerID, traceID);
 
@@ -128,7 +127,7 @@ public class TestGetCommittedBlockLengthAndPutKey {
     long containerID = container.getContainerInfo().getContainerID();
     Pipeline pipeline = container.getPipeline();
     XceiverClientSpi client =
-        xceiverClientManager.acquireClient(pipeline, containerID);
+        xceiverClientManager.acquireClient(pipeline);
     // create the container
     ContainerProtocolCalls.createContainer(client, containerID, traceID);
 
@@ -162,7 +161,7 @@ public class TestGetCommittedBlockLengthAndPutKey {
             HddsProtos.ReplicationFactor.ONE, containerOwner);
     long containerID = container.getContainerInfo().getContainerID();
     XceiverClientSpi client = xceiverClientManager
-        .acquireClient(container.getPipeline(), containerID);
+        .acquireClient(container.getPipeline());
     ContainerProtocolCalls.createContainer(client, containerID, traceID);
 
     BlockID blockID = ContainerTestHelper.getTestBlockID(containerID);
@@ -187,7 +186,7 @@ public class TestGetCommittedBlockLengthAndPutKey {
             HddsProtos.ReplicationFactor.ONE, containerOwner);
     long containerID = container.getContainerInfo().getContainerID();
     XceiverClientSpi client = xceiverClientManager
-        .acquireClient(container.getPipeline(), containerID);
+        .acquireClient(container.getPipeline());
     ContainerProtocolCalls
         .createContainer(client, containerID, traceID);
 
@@ -219,12 +218,11 @@ public class TestGetCommittedBlockLengthAndPutKey {
     ContainerProtos.PutBlockResponseProto response;
     String traceID = UUID.randomUUID().toString();
     ContainerWithPipeline container = storageContainerLocationClient
-        .allocateContainer(xceiverClientManager.getType(),
+        .allocateContainer(HddsProtos.ReplicationType.RATIS,
             HddsProtos.ReplicationFactor.ONE, containerOwner);
     long containerID = container.getContainerInfo().getContainerID();
     Pipeline pipeline = container.getPipeline();
-    XceiverClientSpi client =
-        xceiverClientManager.acquireClient(pipeline, containerID);
+    XceiverClientSpi client = xceiverClientManager.acquireClient(pipeline);
     //create the container
     ContainerProtocolCalls.createContainer(client, containerID, traceID);
 
@@ -241,14 +239,18 @@ public class TestGetCommittedBlockLengthAndPutKey {
         ContainerTestHelper
             .getPutBlockRequest(pipeline, writeChunkRequest.getWriteChunk());
     response = client.sendCommand(putKeyRequest).getPutBlock();
+    Assert.assertEquals(
+        response.getCommittedBlockLength().getBlockLength(), data.length);
+    Assert.assertTrue(response.getCommittedBlockLength().getBlockID()
+        .getBlockCommitSequenceId() > 0);
+    BlockID responseBlockID = BlockID
+        .getFromProtobuf(response.getCommittedBlockLength().getBlockID());
+    blockID
+        .setBlockCommitSequenceId(responseBlockID.getBlockCommitSequenceId());
     // make sure the block ids in the request and response are same.
     // This will also ensure that closing the container committed the block
     // on the Datanodes.
-    Assert.assertEquals(BlockID
-        .getFromProtobuf(response.getCommittedBlockLength().getBlockID()),
-        blockID);
-    Assert.assertEquals(
-        response.getCommittedBlockLength().getBlockLength(), data.length);
+    Assert.assertEquals(responseBlockID, blockID);
     xceiverClientManager.releaseClient(client);
   }
 }

@@ -17,6 +17,7 @@
 package org.apache.hadoop.hdds.scm.block;
 
 import com.google.common.collect.ArrayListMultimap;
+import org.apache.hadoop.hdds.scm.container.ContainerID;
 import org.apache.hadoop.hdds.scm.container.ContainerManager;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.proto
@@ -30,7 +31,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
-import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 
 /**
  * A wrapper class to hold info about datanode and all deleted block
@@ -60,8 +61,9 @@ public class DatanodeDeletedBlockTransactions {
     Pipeline pipeline = null;
     try {
       ContainerWithPipeline containerWithPipeline =
-          containerManager.getContainerWithPipeline(tx.getContainerID());
-      if (containerWithPipeline.getContainerInfo().isContainerOpen()
+          containerManager.getContainerWithPipeline(
+              ContainerID.valueof(tx.getContainerID()));
+      if (containerWithPipeline.getContainerInfo().isOpen()
           || containerWithPipeline.getPipeline().isEmpty()) {
         return false;
       }
@@ -72,7 +74,7 @@ public class DatanodeDeletedBlockTransactions {
     }
 
     boolean success = false;
-    for (DatanodeDetails dd : pipeline.getMachines()) {
+    for (DatanodeDetails dd : pipeline.getNodes()) {
       UUID dnID = dd.getUuid();
       if (dnsWithTransactionCommitted == null ||
           !dnsWithTransactionCommitted.contains(dnID)) {

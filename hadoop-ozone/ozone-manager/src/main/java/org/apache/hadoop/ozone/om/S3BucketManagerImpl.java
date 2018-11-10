@@ -19,8 +19,8 @@
 package org.apache.hadoop.ozone.om;
 
 import com.google.common.base.Preconditions;
-import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
@@ -74,6 +74,10 @@ public class S3BucketManagerImpl implements S3BucketManager {
     Preconditions.checkArgument(Strings.isNotBlank(userName), "User name " +
         "cannot be null or empty.");
 
+    Preconditions.checkArgument(bucketName.length() >=3 &&
+        bucketName.length() < 64, "Length of the S3 Bucket is not correct.");
+
+
     // TODO: Decide if we want to enforce S3 Bucket Creation Rules in this
     // code path?
     // https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
@@ -105,6 +109,7 @@ public class S3BucketManagerImpl implements S3BucketManager {
               bucketName.getBytes(StandardCharsets.UTF_8));
 
       if (bucket != null) {
+        LOG.debug("Bucket already exists. {}", bucketName);
         throw new OMException(
             "Unable to create S3 bucket. " + bucketName + " already exists.",
             OMException.ResultCodes.S3_BUCKET_ALREADY_EXISTS);
@@ -120,6 +125,30 @@ public class S3BucketManagerImpl implements S3BucketManager {
     } finally {
       omMetadataManager.getLock().releaseS3Lock(bucketName);
     }
+  }
+
+  @Override
+  public void deleteS3Bucket(String bucketName) throws IOException {
+    Preconditions.checkArgument(
+        Strings.isNotBlank(bucketName), "Bucket name cannot be null or empty");
+
+    omMetadataManager.getLock().acquireS3Lock(bucketName);
+    try {
+      byte[] bucket = bucketName.getBytes(StandardCharsets.UTF_8);
+      byte[] map = omMetadataManager.getS3Table().get(bucket);
+
+      if (map == null) {
+        throw new OMException("No such S3 bucket. " + bucketName,
+            OMException.ResultCodes.S3_BUCKET_NOT_FOUND);
+      }
+      bucketManager.deleteBucket(getOzoneVolumeName(bucketName), bucketName);
+      omMetadataManager.getS3Table().delete(bucket);
+    } catch(IOException ex) {
+      throw ex;
+    } finally {
+      omMetadataManager.getLock().releaseS3Lock(bucketName);
+    }
+
   }
 
   private String formatOzoneVolumeName(String userName) {
@@ -165,6 +194,12 @@ public class S3BucketManagerImpl implements S3BucketManager {
 
   @Override
   public String getOzoneBucketMapping(String s3BucketName) throws IOException {
+    Preconditions.checkArgument(
+        Strings.isNotBlank(s3BucketName),
+        "Bucket name cannot be null or empty.");
+    Preconditions.checkArgument(s3BucketName.length() >=3 &&
+        s3BucketName.length() < 64,
+        "Length of the S3 Bucket is not correct.");
     omMetadataManager.getLock().acquireS3Lock(s3BucketName);
     try {
       byte[] mapping =
@@ -191,4 +226,5 @@ public class S3BucketManagerImpl implements S3BucketManager {
     String mapping = getOzoneBucketMapping(s3BucketName);
     return mapping.split("/")[1];
   }
+
 }

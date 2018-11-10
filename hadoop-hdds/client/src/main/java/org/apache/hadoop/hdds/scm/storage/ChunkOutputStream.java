@@ -18,7 +18,10 @@
 
 package org.apache.hadoop.hdds.scm.storage;
 
-import org.apache.ratis.shaded.com.google.protobuf.ByteString;
+
+import com.google.common.base.Preconditions;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.hadoop.hdds.scm.XceiverClientManager;
 import org.apache.hadoop.hdds.scm.XceiverClientSpi;
@@ -55,7 +58,7 @@ import static org.apache.hadoop.hdds.scm.storage.ContainerProtocolCalls
  */
 public class ChunkOutputStream extends OutputStream {
 
-  private final BlockID blockID;
+  private BlockID blockID;
   private final String key;
   private final String traceID;
   private final BlockData.Builder containerBlockData;
@@ -97,6 +100,10 @@ public class ChunkOutputStream extends OutputStream {
 
   public ByteBuffer getBuffer() {
     return buffer;
+  }
+
+  public BlockID getBlockID() {
+    return blockID;
   }
 
   @Override
@@ -155,7 +162,14 @@ public class ChunkOutputStream extends OutputStream {
         writeChunkToContainer();
       }
       try {
-        putBlock(xceiverClient, containerBlockData.build(), traceID);
+        ContainerProtos.PutBlockResponseProto responseProto =
+            putBlock(xceiverClient, containerBlockData.build(), traceID);
+        BlockID responseBlockID = BlockID.getFromProtobuf(
+            responseProto.getCommittedBlockLength().getBlockID());
+        Preconditions.checkState(blockID.getContainerBlockID()
+            .equals(responseBlockID.getContainerBlockID()));
+        // updates the bcsId of the block
+        blockID = responseBlockID;
       } catch (IOException e) {
         throw new IOException(
             "Unexpected Storage Container Exception: " + e.toString(), e);

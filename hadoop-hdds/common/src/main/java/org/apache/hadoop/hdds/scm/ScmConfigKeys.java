@@ -19,7 +19,7 @@ package org.apache.hadoop.hdds.scm;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
-import org.apache.ratis.shaded.proto.RaftProtos.ReplicationLevel;
+import org.apache.ratis.proto.RaftProtos.ReplicationLevel;
 import org.apache.ratis.util.TimeDuration;
 
 import java.util.concurrent.TimeUnit;
@@ -30,6 +30,11 @@ import java.util.concurrent.TimeUnit;
 @InterfaceAudience.Public
 @InterfaceStability.Unstable
 public final class ScmConfigKeys {
+
+  // Location of SCM DB files. For now we just support a single
+  // metadata dir but in future we may support multiple for redundancy or
+  // performance.
+  public static final String OZONE_SCM_DB_DIRS = "ozone.scm.db.dirs";
 
   public static final String SCM_CONTAINER_CLIENT_STALE_THRESHOLD_KEY =
       "scm.container.client.idle.threshold";
@@ -62,6 +67,10 @@ public final class ScmConfigKeys {
       = "dfs.container.ratis.replication.level";
   public static final ReplicationLevel
       DFS_CONTAINER_RATIS_REPLICATION_LEVEL_DEFAULT = ReplicationLevel.MAJORITY;
+  public static final String DFS_CONTAINER_RATIS_NUM_CONTAINER_OP_EXECUTORS_KEY
+      = "dfs.container.ratis.num.container.op.executors";
+  public static final int DFS_CONTAINER_RATIS_NUM_CONTAINER_OP_EXECUTORS_DEFAULT
+      = 10;
   public static final String DFS_CONTAINER_RATIS_SEGMENT_SIZE_KEY =
       "dfs.container.ratis.segment.size";
   public static final int DFS_CONTAINER_RATIS_SEGMENT_SIZE_DEFAULT =
@@ -70,6 +79,20 @@ public final class ScmConfigKeys {
       "dfs.container.ratis.segment.preallocated.size";
   public static final int
       DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_DEFAULT = 128 * 1024 * 1024;
+  public static final String
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT =
+      "dfs.container.ratis.statemachinedata.sync.timeout";
+  public static final TimeDuration
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT_DEFAULT =
+      TimeDuration.valueOf(10, TimeUnit.SECONDS);
+  public static final String
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES =
+      "dfs.container.ratis.statemachinedata.sync.retries";
+  public static final int
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES_DEFAULT = -1;
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE =
+      "dfs.container.ratis.log.queue.size";
+  public static final int DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE_DEFAULT = 128;
   public static final String DFS_RATIS_CLIENT_REQUEST_TIMEOUT_DURATION_KEY =
       "dfs.ratis.client.request.timeout.duration";
   public static final TimeDuration
@@ -99,6 +122,10 @@ public final class ScmConfigKeys {
   public static final TimeDuration
       DFS_RATIS_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_DEFAULT =
       TimeDuration.valueOf(1, TimeUnit.SECONDS);
+
+  public static final String DFS_RATIS_SNAPSHOT_THRESHOLD_KEY =
+      "dfs.ratis.snapshot.threshold";
+  public static final long DFS_RATIS_SNAPSHOT_THRESHOLD_DEFAULT = 10000;
 
   public static final String DFS_RATIS_SERVER_FAILURE_DURATION_KEY =
       "dfs.ratis.server.failure.duration";

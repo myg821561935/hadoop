@@ -20,6 +20,8 @@ package org.apache.hadoop.yarn.server.nodemanager;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
+import org.apache.hadoop.hdfs.protocol.datatransfer.IOStreamPair;
+import org.apache.hadoop.yarn.server.nodemanager.executor.ContainerExecContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -60,9 +62,15 @@ import org.apache.hadoop.yarn.server.nodemanager.executor.LocalizerStartContext;
 import org.apache.hadoop.yarn.server.nodemanager.util.CgroupsLCEResourcesHandler;
 import org.apache.hadoop.yarn.server.nodemanager.util.DefaultLCEResourcesHandler;
 import org.apache.hadoop.yarn.server.nodemanager.util.LCEResourcesHandler;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -651,6 +659,10 @@ public class LinuxContainerExecutor extends ContainerExecutor {
         ctx.getNmPrivateContainerScriptPath())
       .setExecutionAttribute(NM_PRIVATE_TOKENS_PATH,
         ctx.getNmPrivateTokensPath())
+      .setExecutionAttribute(NM_PRIVATE_KEYSTORE_PATH,
+        ctx.getNmPrivateKeystorePath())
+      .setExecutionAttribute(NM_PRIVATE_TRUSTSTORE_PATH,
+        ctx.getNmPrivateTruststorePath())
       .setExecutionAttribute(PID_FILE_PATH, pidFilePath)
       .setExecutionAttribute(LOCAL_DIRS, ctx.getLocalDirs())
       .setExecutionAttribute(LOG_DIRS, ctx.getLogDirs())
@@ -777,6 +789,32 @@ public class LinuxContainerExecutor extends ContainerExecutor {
       postComplete(container.getContainerId());
     }
     return true;
+  }
+
+  /**
+   * Performs container exec.
+   *
+   * @param ctx Encapsulates information necessary for exec container.
+   * @return stdin and stdout of container exec.
+   * @throws ContainerExecutionException if container exec fails.
+   */
+  @Override
+  public IOStreamPair execContainer(ContainerExecContext ctx)
+      throws ContainerExecutionException {
+    // TODO: calls PrivilegedOperationExecutor and return IOStream pairs
+    InputStream in = null;
+    OutputStream out = null;
+    int byteSize = 4000;
+    try {
+      in = new ByteArrayInputStream(
+          "This is input command".getBytes(Charset.forName("UTF-8")));
+      out = new ByteArrayOutputStream(byteSize);
+    } catch (IllegalArgumentException e) {
+      LOG.error("Failed to execute command to container runtime", e);
+    }
+    IOStreamPair pair = new IOStreamPair(in, out);
+    System.out.println(pair);
+    return new IOStreamPair(in, out);
   }
 
   @Override
@@ -959,4 +997,46 @@ public class LinuxContainerExecutor extends ContainerExecutor {
           "containerId: {}. Exception: ", containerId, e);
     }
   }
+
+  @Override
+  public synchronized void updateYarnSysFS(Context ctx, String user,
+      String appId, String spec) throws IOException {
+    LocalDirsHandlerService dirsHandler = nmContext.getLocalDirsHandler();
+    Path sysFSPath = dirsHandler.getLocalPathForWrite(
+        "nmPrivate/" + appId + "/sysfs/app.json");
+    File file = new File(sysFSPath.toString());
+    List<String> localDirs = dirsHandler.getLocalDirs();
+    if (file.exists()) {
+      if (!file.delete()) {
+        LOG.warn("Unable to delete " + sysFSPath.toString());
+      }
+    }
+    if (file.createNewFile()) {
+      FileOutputStream output = new FileOutputStream(file);
+      try {
+        output.write(spec.getBytes("UTF-8"));
+      } finally {
+        output.close();
+      }
+    }
+    PrivilegedOperation privOp = new PrivilegedOperation(
+        PrivilegedOperation.OperationType.SYNC_YARN_SYSFS);
+    String runAsUser = getRunAsUser(user);
+    privOp.appendArgs(runAsUser,
+        user,
+        Integer.toString(PrivilegedOperation.RunAsUserCommand
+        .SYNC_YARN_SYSFS.getValue()),
+        appId, StringUtils.join(PrivilegedOperation
+            .LINUX_FILE_PATH_SEPARATOR, localDirs));
+    privOp.disableFailureLogging();
+    PrivilegedOperationExecutor privilegedOperationExecutor =
+        PrivilegedOperationExecutor.getInstance(nmContext.getConf());
+    try {
+      privilegedOperationExecutor.executePrivilegedOperation(null,
+            privOp, null, null, false, false);
+    } catch (PrivilegedOperationException e) {
+      throw new IOException(e);
+    }
+  }
+
 }

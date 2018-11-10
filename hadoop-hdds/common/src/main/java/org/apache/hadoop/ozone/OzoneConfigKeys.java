@@ -24,7 +24,7 @@ import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
 
-import org.apache.ratis.shaded.proto.RaftProtos.ReplicationLevel;
+import org.apache.ratis.proto.RaftProtos.ReplicationLevel;
 import org.apache.ratis.util.TimeDuration;
 
 /**
@@ -74,9 +74,6 @@ public final class OzoneConfigKeys {
       "ozone.trace.enabled";
   public static final boolean OZONE_TRACE_ENABLED_DEFAULT = false;
 
-  public static final String OZONE_METADATA_DIRS =
-      "ozone.metadata.dirs";
-
   public static final String OZONE_METADATA_STORE_IMPL =
       "ozone.metastore.impl";
   public static final String OZONE_METADATA_STORE_IMPL_LEVELDB =
@@ -90,7 +87,7 @@ public final class OzoneConfigKeys {
       "ozone.metastore.rocksdb.statistics";
 
   public static final String  OZONE_METADATA_STORE_ROCKSDB_STATISTICS_DEFAULT =
-      "ALL";
+      "OFF";
   public static final String OZONE_METADATA_STORE_ROCKSDB_STATISTICS_OFF =
       "OFF";
 
@@ -220,6 +217,10 @@ public final class OzoneConfigKeys {
   public static final ReplicationLevel
       DFS_CONTAINER_RATIS_REPLICATION_LEVEL_DEFAULT
       = ScmConfigKeys.DFS_CONTAINER_RATIS_REPLICATION_LEVEL_DEFAULT;
+  public static final String DFS_CONTAINER_RATIS_NUM_CONTAINER_OP_EXECUTORS_KEY
+      = ScmConfigKeys.DFS_CONTAINER_RATIS_NUM_CONTAINER_OP_EXECUTORS_KEY;
+  public static final int DFS_CONTAINER_RATIS_NUM_CONTAINER_OP_EXECUTORS_DEFAULT
+      = ScmConfigKeys.DFS_CONTAINER_RATIS_NUM_CONTAINER_OP_EXECUTORS_DEFAULT;
   public static final String DFS_CONTAINER_RATIS_SEGMENT_SIZE_KEY
       = ScmConfigKeys.DFS_CONTAINER_RATIS_SEGMENT_SIZE_KEY;
   public static final int DFS_CONTAINER_RATIS_SEGMENT_SIZE_DEFAULT
@@ -228,6 +229,15 @@ public final class OzoneConfigKeys {
       = ScmConfigKeys.DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_KEY;
   public static final int DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_DEFAULT
       = ScmConfigKeys.DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_DEFAULT;
+
+  // config settings to enable stateMachineData write timeout
+  public static final String
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT;
+  public static final TimeDuration
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT_DEFAULT;
+
   public static final int DFS_CONTAINER_CHUNK_MAX_SIZE
       = ScmConfigKeys.OZONE_SCM_CHUNK_MAX_SIZE;
   public static final String DFS_CONTAINER_RATIS_DATANODE_STORAGE_DIR =
@@ -251,6 +261,16 @@ public final class OzoneConfigKeys {
   public static final TimeDuration
       DFS_RATIS_SERVER_RETRY_CACHE_TIMEOUT_DURATION_DEFAULT =
       ScmConfigKeys.DFS_RATIS_SERVER_RETRY_CACHE_TIMEOUT_DURATION_DEFAULT;
+  public static final String
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES;
+  public static final int
+      DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES_DEFAULT;
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE;
+  public static final int DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE_DEFAULT;
   public static final String DFS_RATIS_SERVER_REQUEST_TIMEOUT_DURATION_KEY =
       ScmConfigKeys.DFS_RATIS_SERVER_REQUEST_TIMEOUT_DURATION_KEY;
   public static final TimeDuration
@@ -262,6 +282,10 @@ public final class OzoneConfigKeys {
   public static final TimeDuration
       DFS_RATIS_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_DEFAULT =
       ScmConfigKeys.DFS_RATIS_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_DEFAULT;
+  public static final String DFS_RATIS_SNAPSHOT_THRESHOLD_KEY =
+      ScmConfigKeys.DFS_RATIS_SNAPSHOT_THRESHOLD_KEY;
+  public static final long DFS_RATIS_SNAPSHOT_THRESHOLD_DEFAULT =
+      ScmConfigKeys.DFS_RATIS_SNAPSHOT_THRESHOLD_DEFAULT;
 
   public static final String DFS_RATIS_SERVER_FAILURE_DURATION_KEY =
       ScmConfigKeys.DFS_RATIS_SERVER_FAILURE_DURATION_KEY;

@@ -17,13 +17,14 @@
  */
 package org.apache.hadoop.ozone.genesis;
 
+import org.apache.hadoop.hdds.HddsUtils;
 import org.apache.hadoop.ozone.container.common.impl.ContainerSet;
 import org.apache.hadoop.ozone.container.common.impl.HddsDispatcher;
 import org.apache.hadoop.ozone.container.common.statemachine
     .DatanodeStateMachine.DatanodeStates;
 import org.apache.hadoop.ozone.container.common.statemachine.StateContext;
 import org.apache.hadoop.ozone.container.common.volume.VolumeSet;
-import org.apache.ratis.shaded.com.google.protobuf.ByteString;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -32,7 +33,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.client.BlockID;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 
-import org.apache.hadoop.util.Time;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Scope;
@@ -115,7 +115,7 @@ public class BenchMarkDatanodeDispatcher {
 
     // Create containers
     for (int x = 0; x < INIT_CONTAINERS; x++) {
-      long containerID = Time.getUtcTime() + x;
+      long containerID = HddsUtils.getUtcTime() + x;
       ContainerCommandRequestProto req = getCreateContainerCommand(containerID);
       dispatcher.dispatch(req);
       containers.add(containerID);
@@ -123,7 +123,7 @@ public class BenchMarkDatanodeDispatcher {
     }
 
     for (int x = 0; x < INIT_KEYS; x++) {
-      keys.add(Time.getUtcTime()+x);
+      keys.add(HddsUtils.getUtcTime()+x);
     }
 
     for (int x = 0; x < INIT_CHUNKS; x++) {

@@ -22,7 +22,9 @@ import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.Seekable;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
 import org.apache.hadoop.hdds.client.BlockID;
+import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfo;
 import org.apache.hadoop.hdds.scm.XceiverClientManager;
@@ -111,7 +113,11 @@ public class ChunkGroupInputStream extends InputStream implements Seekable {
     }
     int totalReadLen = 0;
     while (len > 0) {
-      if (streamEntries.size() <= currentStreamIndex) {
+      // if we are at the last block and have read the entire block, return
+      if (streamEntries.size() == 0 ||
+              (streamEntries.size() - 1 <= currentStreamIndex &&
+                      streamEntries.get(currentStreamIndex)
+                              .getRemaining() == 0)) {
         return totalReadLen == 0 ? EOF : totalReadLen;
       }
       ChunkInputStreamEntry current = streamEntries.get(currentStreamIndex);
@@ -129,7 +135,8 @@ public class ChunkGroupInputStream extends InputStream implements Seekable {
       totalReadLen += numBytesRead;
       off += numBytesRead;
       len -= numBytesRead;
-      if (current.getRemaining() <= 0) {
+      if (current.getRemaining() <= 0 &&
+        ((currentStreamIndex + 1) < streamEntries.size())) {
         currentStreamIndex += 1;
       }
     }
@@ -271,8 +278,16 @@ public class ChunkGroupInputStream extends InputStream implements Seekable {
       long containerID = blockID.getContainerID();
       ContainerWithPipeline containerWithPipeline =
           storageContainerLocationClient.getContainerWithPipeline(containerID);
+      Pipeline pipeline = containerWithPipeline.getPipeline();
+
+      // irrespective of the container state, we will always read via Standalone
+      // protocol.
+      if (pipeline.getType() != HddsProtos.ReplicationType.STAND_ALONE) {
+        pipeline = Pipeline.newBuilder(pipeline)
+            .setType(HddsProtos.ReplicationType.STAND_ALONE).build();
+      }
       XceiverClientSpi xceiverClient = xceiverClientManager
-          .acquireClient(containerWithPipeline.getPipeline(), containerID);
+          .acquireClient(pipeline);
       boolean success = false;
       containerKey = omKeyLocationInfo.getLocalID();
       try {

@@ -31,6 +31,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.common.base.Preconditions;
+import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,7 +98,11 @@ public class OzoneFileSystem extends FileSystem {
   @Override
   public void initialize(URI name, Configuration conf) throws IOException {
     super.initialize(name, conf);
-    setConf(conf);
+    if(!(conf instanceof OzoneConfiguration)) {
+      setConf(new OzoneConfiguration(conf));
+    } else {
+      setConf(conf);
+    }
     Objects.requireNonNull(name.getScheme(), "No scheme provided in " + name);
     assert getScheme().equals(name.getScheme());
 
@@ -107,7 +112,7 @@ public class OzoneFileSystem extends FileSystem {
 
     if (!matcher.matches()) {
       throw new IllegalArgumentException("Ozone file system url should be "
-          + "in the form o3://bucket.volume");
+          + "in the form o3fs://bucket.volume");
     }
     String bucketStr = matcher.group(1);
     String volumeStr = matcher.group(2);
@@ -116,15 +121,15 @@ public class OzoneFileSystem extends FileSystem {
       uri = new URIBuilder().setScheme(OZONE_URI_SCHEME)
           .setHost(authority).build();
       LOG.trace("Ozone URI for ozfs initialization is " + uri);
-      this.ozoneClient = OzoneClientFactory.getRpcClient(conf);
+      this.ozoneClient = OzoneClientFactory.getRpcClient(getConf());
       objectStore = ozoneClient.getObjectStore();
       this.volume = objectStore.getVolume(volumeStr);
       this.bucket = volume.getBucket(bucketStr);
       this.replicationType = ReplicationType.valueOf(
-          conf.get(OzoneConfigKeys.OZONE_REPLICATION_TYPE,
+          getConf().get(OzoneConfigKeys.OZONE_REPLICATION_TYPE,
               OzoneConfigKeys.OZONE_REPLICATION_TYPE_DEFAULT));
       this.replicationFactor = ReplicationFactor.valueOf(
-          conf.getInt(OzoneConfigKeys.OZONE_REPLICATION,
+          getConf().getInt(OzoneConfigKeys.OZONE_REPLICATION,
               OzoneConfigKeys.OZONE_REPLICATION_DEFAULT));
       try {
         this.userName =
@@ -349,7 +354,7 @@ public class OzoneFileSystem extends FileSystem {
     }
 
     if (srcStatus.isDirectory()) {
-      if (dst.toString().startsWith(src.toString())) {
+      if (dst.toString().startsWith(src.toString() + OZONE_URI_DELIMITER)) {
         LOG.trace("Cannot rename a directory to a subdirectory of self");
         return false;
       }
@@ -448,6 +453,14 @@ public class OzoneFileSystem extends FileSystem {
   }
 
   /**
+   * Get the username of the FS.
+   * @return the short name of the user who instantiated the FS
+   */
+  public String getUsername() {
+    return userName;
+  }
+
+  /**
    * Check whether the path is valid and then create directories.
    * Directory is represented using a key with no value.
    * All the non-existent parent directories are also created.
@@ -528,11 +541,15 @@ public class OzoneFileSystem extends FileSystem {
       throw new FileNotFoundException(f + ": No such file or directory!");
     } else if (isDirectory(meta)) {
       return new FileStatus(0, true, 1, 0,
-          meta.getModificationTime(), qualifiedPath);
+          meta.getModificationTime(), 0,
+          FsPermission.getDirDefault(), getUsername(), getUsername(),
+          qualifiedPath);
     } else {
       //TODO: Fetch replication count from ratis config
       return new FileStatus(meta.getDataSize(), false, 1,
-            getDefaultBlockSize(f), meta.getModificationTime(), qualifiedPath);
+          getDefaultBlockSize(f), meta.getModificationTime(), 0,
+          FsPermission.getFileDefault(), getUsername(), getUsername(),
+          qualifiedPath);
     }
   }
 

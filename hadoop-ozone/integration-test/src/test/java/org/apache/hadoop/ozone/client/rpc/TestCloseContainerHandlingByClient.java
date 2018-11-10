@@ -22,17 +22,23 @@ import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
+import org.apache.hadoop.hdds.scm.container.ContainerID;
+import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
+import org.apache.hadoop.hdds.scm.events.SCMEvents;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineNotFoundException;
 import org.apache.hadoop.ozone.HddsDatanodeService;
 import org.apache.hadoop.hdds.scm.container.common.helpers.
     StorageContainerException;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
-import org.apache.hadoop.hdds.scm.container.common.helpers.Pipeline;
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.ozone.MiniOzoneCluster;
 import org.apache.hadoop.ozone.OzoneConfigKeys;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.client.ObjectStore;
 import org.apache.hadoop.ozone.client.OzoneClient;
+import org.apache.hadoop.ozone.client.OzoneBucket;
+import org.apache.hadoop.ozone.client.OzoneVolume;
 import org.apache.hadoop.ozone.client.OzoneClientFactory;
 import org.apache.hadoop.ozone.client.io.ChunkGroupOutputStream;
 import org.apache.hadoop.ozone.client.io.OzoneInputStream;
@@ -46,6 +52,7 @@ import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.event.Level;
 
@@ -55,6 +62,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Tests Close Container Exception handling by Ozone Client.
@@ -204,9 +212,9 @@ public class TestCloseContainerHandlingByClient {
         createKey(keyName, ReplicationType.STAND_ALONE, (4 * blockSize));
     ChunkGroupOutputStream groupOutputStream =
         (ChunkGroupOutputStream) key.getOutputStream();
-    // With the initial size provided, it should have preallocated 3 blocks
+    // With the initial size provided, it should have preallocated 4 blocks
     Assert.assertEquals(4, groupOutputStream.getStreamEntries().size());
-    // write data more than 1 chunk
+    // write data for 3 blocks and 1 more chunk
     byte[] data = fixedLengthString(keyString, (3 * blockSize)).getBytes();
     Assert.assertEquals(data.length, 3 * blockSize);
     key.write(data);
@@ -254,7 +262,8 @@ public class TestCloseContainerHandlingByClient {
     Assert.assertTrue(key.getOutputStream() instanceof ChunkGroupOutputStream);
     // With the initial size provided, it should have pre allocated 4 blocks
     Assert.assertEquals(4, groupOutputStream.getStreamEntries().size());
-    String dataString = fixedLengthString(keyString, (3 * blockSize));
+    String dataString =
+        fixedLengthString(keyString, (3 * blockSize + chunkSize));
     byte[] data = dataString.getBytes();
     key.write(data);
     // 3 block are completely written to the DataNode in 3 blocks.
@@ -280,10 +289,68 @@ public class TestCloseContainerHandlingByClient {
     // closeContainerException and remaining data in the chunkOutputStream
     // buffer will be copied into a different allocated block and will be
     // committed.
-    Assert.assertEquals(4, keyLocationInfos.size());
-    dataLength = 3 * blockSize + (long) (0.5 * chunkSize);
+    Assert.assertEquals(5, keyLocationInfos.size());
+    dataLength = 3 * blockSize + (long) (1.5 * chunkSize);
     Assert.assertEquals(dataLength, keyInfo.getDataSize());
     validateData(keyName, dataString.concat(dataString2).getBytes());
+  }
+
+  @Test
+  public void testMultiBlockWrites3() throws Exception {
+
+    String keyName = "standalone5";
+    int keyLen = 4 * blockSize;
+    OzoneOutputStream key =
+        createKey(keyName, ReplicationType.RATIS, keyLen);
+    ChunkGroupOutputStream groupOutputStream =
+        (ChunkGroupOutputStream) key.getOutputStream();
+    // With the initial size provided, it should have preallocated 4 blocks
+    Assert.assertEquals(4, groupOutputStream.getStreamEntries().size());
+    // write data 3 blocks and one more chunk
+    byte[] writtenData = fixedLengthString(keyString, keyLen).getBytes();
+    byte[] data = Arrays.copyOfRange(writtenData, 0, 3 * blockSize + chunkSize);
+    Assert.assertEquals(data.length, 3 * blockSize + chunkSize);
+    key.write(data);
+
+    Assert.assertTrue(key.getOutputStream() instanceof ChunkGroupOutputStream);
+    //get the name of a valid container
+    OmKeyArgs keyArgs = new OmKeyArgs.Builder().setVolumeName(volumeName)
+        .setBucketName(bucketName)
+        .setType(HddsProtos.ReplicationType.RATIS)
+        .setFactor(HddsProtos.ReplicationFactor.ONE).setKeyName(keyName)
+        .build();
+
+    waitForContainerClose(keyName, key,
+        HddsProtos.ReplicationType.RATIS);
+    // write 3 more chunks worth of data. It will fail and new block will be
+    // allocated. This write completes 4 blocks worth of data written to key
+    data = Arrays
+        .copyOfRange(writtenData, 3 * blockSize + chunkSize, keyLen);
+    key.write(data);
+
+    key.close();
+    // read the key from OM again and match the length and data.
+    OmKeyInfo keyInfo = cluster.getOzoneManager().lookupKey(keyArgs);
+    List<OmKeyLocationInfo> keyLocationInfos =
+        keyInfo.getKeyLocationVersions().get(0).getBlocksLatestVersionOnly();
+    OzoneVolume volume = objectStore.getVolume(volumeName);
+    OzoneBucket bucket = volume.getBucket(bucketName);
+    OzoneInputStream inputStream = bucket.readKey(keyName);
+    byte[] readData = new byte[keyLen];
+    inputStream.read(readData);
+    Assert.assertArrayEquals(writtenData, readData);
+
+    // Though we have written only block initially, the close will hit
+    // closeContainerException and remaining data in the chunkOutputStream
+    // buffer will be copied into a different allocated block and will be
+    // committed.
+    Assert.assertEquals(5, keyLocationInfos.size());
+    Assert.assertEquals(4 * blockSize, keyInfo.getDataSize());
+    long length = 0;
+    for (OmKeyLocationInfo locationInfo : keyLocationInfos) {
+      length += locationInfo.getLength();
+    }
+    Assert.assertEquals(4 * blockSize, length);
   }
 
   private void waitForContainerClose(String keyName,
@@ -294,17 +361,28 @@ public class TestCloseContainerHandlingByClient {
     List<OmKeyLocationInfo> locationInfoList =
         groupOutputStream.getLocationInfoList();
     List<Long> containerIdList = new ArrayList<>();
-    List<Pipeline> pipelineList = new ArrayList<>();
     for (OmKeyLocationInfo info : locationInfoList) {
       containerIdList.add(info.getContainerID());
     }
     Assert.assertTrue(!containerIdList.isEmpty());
+    waitForContainerClose(type, containerIdList.toArray(new Long[0]));
+  }
+
+  private void waitForContainerClose(HddsProtos.ReplicationType type,
+      Long... containerIdList)
+      throws ContainerNotFoundException, PipelineNotFoundException,
+      TimeoutException, InterruptedException {
+    List<Pipeline> pipelineList = new ArrayList<>();
     for (long containerID : containerIdList) {
+      cluster.getStorageContainerManager().getEventQueue()
+          .fireEvent(SCMEvents.CLOSE_CONTAINER,
+              ContainerID.valueof(containerID));
       Pipeline pipeline =
           cluster.getStorageContainerManager().getContainerManager()
-              .getContainerWithPipeline(containerID).getPipeline();
+              .getContainerWithPipeline(ContainerID.valueof(containerID))
+              .getPipeline();
       pipelineList.add(pipeline);
-      List<DatanodeDetails> datanodes = pipeline.getMachines();
+      List<DatanodeDetails> datanodes = pipeline.getNodes();
       for (DatanodeDetails details : datanodes) {
         Assert.assertFalse(ContainerTestHelper
             .isContainerClosed(cluster, containerID, details));
@@ -317,19 +395,29 @@ public class TestCloseContainerHandlingByClient {
     int index = 0;
     for (long containerID : containerIdList) {
       Pipeline pipeline = pipelineList.get(index);
-      List<DatanodeDetails> datanodes = pipeline.getMachines();
-      for (DatanodeDetails datanodeDetails : datanodes) {
-        GenericTestUtils.waitFor(() -> ContainerTestHelper
-                .isContainerClosed(cluster, containerID, datanodeDetails), 500,
-            15 * 1000);
-        //double check if it's really closed (waitFor also throws an exception)
-        Assert.assertTrue(ContainerTestHelper
-            .isContainerClosed(cluster, containerID, datanodeDetails));
+      List<DatanodeDetails> datanodes = pipeline.getNodes();
+      // Below condition avoids the case where container has been allocated
+      // but not yet been used by the client. In such a case container is never
+      // created.
+      if (datanodes.stream().anyMatch(dn -> ContainerTestHelper
+          .isContainerPresent(cluster, containerID, dn))) {
+        for (DatanodeDetails datanodeDetails : datanodes) {
+          GenericTestUtils.waitFor(() -> ContainerTestHelper
+                  .isContainerClosed(cluster, containerID, datanodeDetails),
+              500, 15 * 1000);
+          //double check if it's really closed
+          // (waitFor also throws an exception)
+          Assert.assertTrue(ContainerTestHelper
+              .isContainerClosed(cluster, containerID, datanodeDetails));
+        }
       }
       index++;
     }
   }
 
+  @Ignore // test needs to be fixed after close container is handled for
+  // non-existent containers on datanode. Test closes pre allocated containers
+  // on the datanode.
   @Test
   public void testDiscardPreallocatedBlocks() throws Exception {
     String keyName = "discardpreallocatedblocks";
@@ -341,7 +429,6 @@ public class TestCloseContainerHandlingByClient {
     Assert.assertTrue(key.getOutputStream() instanceof ChunkGroupOutputStream);
     // With the initial size provided, it should have pre allocated 4 blocks
     Assert.assertEquals(2, groupOutputStream.getStreamEntries().size());
-    Assert.assertEquals(2, groupOutputStream.getLocationInfoList().size());
     String dataString = fixedLengthString(keyString, (1 * blockSize));
     byte[] data = dataString.getBytes();
     key.write(data);
@@ -350,7 +437,8 @@ public class TestCloseContainerHandlingByClient {
     long containerID = locationInfos.get(0).getContainerID();
     List<DatanodeDetails> datanodes =
         cluster.getStorageContainerManager().getContainerManager()
-            .getContainerWithPipeline(containerID).getPipeline().getMachines();
+            .getContainerWithPipeline(ContainerID.valueof(containerID))
+            .getPipeline().getNodes();
     Assert.assertEquals(1, datanodes.size());
     waitForContainerClose(keyName, key, HddsProtos.ReplicationType.STAND_ALONE);
     dataString = fixedLengthString(keyString, (1 * blockSize));
@@ -452,7 +540,8 @@ public class TestCloseContainerHandlingByClient {
     long containerID = locationInfos.get(0).getContainerID();
     List<DatanodeDetails> datanodes =
         cluster.getStorageContainerManager().getContainerManager()
-            .getContainerWithPipeline(containerID).getPipeline().getMachines();
+            .getContainerWithPipeline(ContainerID.valueof(containerID))
+            .getPipeline().getNodes();
     Assert.assertEquals(1, datanodes.size());
     // move the container on the datanode to Closing state, this will ensure
     // closing the key will hit BLOCK_NOT_COMMITTED_EXCEPTION while trying
@@ -461,7 +550,7 @@ public class TestCloseContainerHandlingByClient {
       if (datanodes.get(0).equals(datanodeService.getDatanodeDetails())) {
         datanodeService.getDatanodeStateMachine().getContainer()
             .getContainerSet().getContainer(containerID).getContainerData()
-            .setState(ContainerProtos.ContainerLifeCycleState.CLOSING);
+            .setState(ContainerProtos.ContainerDataProto.State.CLOSING);
       }
     }
     dataString = fixedLengthString(keyString, (chunkSize * 1 / 2));

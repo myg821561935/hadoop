@@ -20,7 +20,7 @@ package org.apache.hadoop.hdds.scm.storage;
 
 import org.apache.hadoop.hdds.scm.container.common.helpers
     .BlockNotCommittedException;
-import org.apache.ratis.shaded.com.google.protobuf.ByteString;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import org.apache.hadoop.hdds.scm.XceiverClientSpi;
 import org.apache.hadoop.hdds.scm.container.common.helpers
     .StorageContainerException;
@@ -59,6 +59,8 @@ import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.Type;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .WriteChunkRequestProto;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.KeyValue;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.
+    PutSmallFileResponseProto;
 import org.apache.hadoop.hdds.client.BlockID;
 
 import java.io.IOException;
@@ -89,7 +91,7 @@ public final class ContainerProtocolCalls  {
     GetBlockRequestProto.Builder readBlockRequest = GetBlockRequestProto
         .newBuilder()
         .setBlockID(datanodeBlockID);
-    String id = xceiverClient.getPipeline().getLeader().getUuidString();
+    String id = xceiverClient.getPipeline().getFirstNode().getUuidString();
 
     ContainerCommandRequestProto request = ContainerCommandRequestProto
         .newBuilder()
@@ -122,7 +124,7 @@ public final class ContainerProtocolCalls  {
         getBlockLengthRequestBuilder =
         ContainerProtos.GetCommittedBlockLengthRequestProto.newBuilder().
             setBlockID(blockID.getDatanodeBlockIDProtobuf());
-    String id = xceiverClient.getPipeline().getLeader().getUuidString();
+    String id = xceiverClient.getPipeline().getFirstNode().getUuidString();
     ContainerCommandRequestProto request =
         ContainerCommandRequestProto.newBuilder()
             .setCmdType(Type.GetCommittedBlockLength)
@@ -141,24 +143,23 @@ public final class ContainerProtocolCalls  {
    * @param xceiverClient client to perform call
    * @param containerBlockData block data to identify container
    * @param traceID container protocol call args
+   * @return putBlockResponse
    * @throws IOException if there is an I/O error while performing the call
    */
-  public static void putBlock(XceiverClientSpi xceiverClient,
-      BlockData containerBlockData, String traceID) throws IOException {
-    PutBlockRequestProto.Builder createBlockRequest = PutBlockRequestProto
-        .newBuilder()
-        .setBlockData(containerBlockData);
-    String id = xceiverClient.getPipeline().getLeader().getUuidString();
-    ContainerCommandRequestProto request = ContainerCommandRequestProto
-        .newBuilder()
-        .setCmdType(Type.PutBlock)
-        .setContainerID(containerBlockData.getBlockID().getContainerID())
-        .setTraceID(traceID)
-        .setDatanodeUuid(id)
-        .setPutBlock(createBlockRequest)
-        .build();
+  public static ContainerProtos.PutBlockResponseProto putBlock(
+      XceiverClientSpi xceiverClient, BlockData containerBlockData,
+      String traceID) throws IOException {
+    PutBlockRequestProto.Builder createBlockRequest =
+        PutBlockRequestProto.newBuilder().setBlockData(containerBlockData);
+    String id = xceiverClient.getPipeline().getFirstNode().getUuidString();
+    ContainerCommandRequestProto request =
+        ContainerCommandRequestProto.newBuilder().setCmdType(Type.PutBlock)
+            .setContainerID(containerBlockData.getBlockID().getContainerID())
+            .setTraceID(traceID).setDatanodeUuid(id)
+            .setPutBlock(createBlockRequest).build();
     ContainerCommandResponseProto response = xceiverClient.sendCommand(request);
     validateContainerResponse(response);
+    return response.getPutBlock();
   }
 
   /**
@@ -177,7 +178,7 @@ public final class ContainerProtocolCalls  {
         .newBuilder()
         .setBlockID(blockID.getDatanodeBlockIDProtobuf())
         .setChunkData(chunk);
-    String id = xceiverClient.getPipeline().getLeader().getUuidString();
+    String id = xceiverClient.getPipeline().getFirstNode().getUuidString();
     ContainerCommandRequestProto request = ContainerCommandRequestProto
         .newBuilder()
         .setCmdType(Type.ReadChunk)
@@ -209,7 +210,7 @@ public final class ContainerProtocolCalls  {
         .setBlockID(blockID.getDatanodeBlockIDProtobuf())
         .setChunkData(chunk)
         .setData(data);
-    String id = xceiverClient.getPipeline().getLeader().getUuidString();
+    String id = xceiverClient.getPipeline().getFirstNode().getUuidString();
     ContainerCommandRequestProto request = ContainerCommandRequestProto
         .newBuilder()
         .setCmdType(Type.WriteChunk)
@@ -232,10 +233,11 @@ public final class ContainerProtocolCalls  {
    * @param blockID - ID of the block
    * @param data - Data to be written into the container.
    * @param traceID - Trace ID for logging purpose.
+   * @return container protocol writeSmallFile response
    * @throws IOException
    */
-  public static void writeSmallFile(XceiverClientSpi client,
-      BlockID blockID, byte[] data, String traceID)
+  public static PutSmallFileResponseProto writeSmallFile(
+      XceiverClientSpi client, BlockID blockID, byte[] data, String traceID)
       throws IOException {
 
     BlockData containerBlockData =
@@ -258,7 +260,7 @@ public final class ContainerProtocolCalls  {
             .setBlock(createBlockRequest).setData(ByteString.copyFrom(data))
             .build();
 
-    String id = client.getPipeline().getLeader().getUuidString();
+    String id = client.getPipeline().getFirstNode().getUuidString();
     ContainerCommandRequestProto request =
         ContainerCommandRequestProto.newBuilder()
             .setCmdType(Type.PutSmallFile)
@@ -269,6 +271,7 @@ public final class ContainerProtocolCalls  {
             .build();
     ContainerCommandResponseProto response = client.sendCommand(request);
     validateContainerResponse(response);
+    return response.getPutSmallFile();
   }
 
   /**
@@ -286,7 +289,7 @@ public final class ContainerProtocolCalls  {
     createRequest.setContainerType(ContainerProtos.ContainerType
         .KeyValueContainer);
 
-    String id = client.getPipeline().getLeader().getUuidString();
+    String id = client.getPipeline().getFirstNode().getUuidString();
     ContainerCommandRequestProto.Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.CreateContainer);
@@ -312,7 +315,7 @@ public final class ContainerProtocolCalls  {
     ContainerProtos.DeleteContainerRequestProto.Builder deleteRequest =
         ContainerProtos.DeleteContainerRequestProto.newBuilder();
     deleteRequest.setForceDelete(force);
-    String id = client.getPipeline().getLeader().getUuidString();
+    String id = client.getPipeline().getFirstNode().getUuidString();
 
     ContainerCommandRequestProto.Builder request =
         ContainerCommandRequestProto.newBuilder();
@@ -336,7 +339,7 @@ public final class ContainerProtocolCalls  {
    */
   public static void closeContainer(XceiverClientSpi client,
       long containerID, String traceID) throws IOException {
-    String id = client.getPipeline().getLeader().getUuidString();
+    String id = client.getPipeline().getFirstNode().getUuidString();
 
     ContainerCommandRequestProto.Builder request =
         ContainerCommandRequestProto.newBuilder();
@@ -360,7 +363,7 @@ public final class ContainerProtocolCalls  {
   public static ReadContainerResponseProto readContainer(
       XceiverClientSpi client, long containerID,
       String traceID) throws IOException {
-    String id = client.getPipeline().getLeader().getUuidString();
+    String id = client.getPipeline().getFirstNode().getUuidString();
 
     ContainerCommandRequestProto.Builder request =
         ContainerCommandRequestProto.newBuilder();
@@ -394,7 +397,7 @@ public final class ContainerProtocolCalls  {
         GetSmallFileRequestProto
             .newBuilder().setBlock(getBlock)
             .build();
-    String id = client.getPipeline().getLeader().getUuidString();
+    String id = client.getPipeline().getFirstNode().getUuidString();
 
     ContainerCommandRequestProto request = ContainerCommandRequestProto
         .newBuilder()

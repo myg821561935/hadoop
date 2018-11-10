@@ -27,11 +27,12 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
-import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
+import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.ozone.OzoneAcl;
 import org.apache.hadoop.ozone.client.io.OzoneInputStream;
 import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
@@ -92,7 +93,7 @@ public class OzoneBucketStub extends OzoneBucket {
                 size,
                 System.currentTimeMillis(),
                 System.currentTimeMillis(),
-                new ArrayList<>()
+                new ArrayList<>(), type
             ));
             super.close();
           }
@@ -107,12 +108,17 @@ public class OzoneBucketStub extends OzoneBucket {
 
   @Override
   public OzoneKeyDetails getKey(String key) throws IOException {
-    return keyDetails.get(key);
+    if (keyDetails.containsKey(key)) {
+      return keyDetails.get(key);
+    } else {
+      throw new IOException("Lookup key failed, error:KEY_NOT_FOUND");
+    }
   }
 
   @Override
   public Iterator<? extends OzoneKey> listKeys(String keyPrefix) {
-    return keyDetails.values()
+    Map<String, OzoneKey> sortedKey = new TreeMap<String, OzoneKey>(keyDetails);
+    return sortedKey.values()
         .stream()
         .filter(key -> key.getName().startsWith(keyPrefix))
         .collect(Collectors.toList())
@@ -122,7 +128,8 @@ public class OzoneBucketStub extends OzoneBucket {
   @Override
   public Iterator<? extends OzoneKey> listKeys(String keyPrefix,
       String prevKey) {
-    return keyDetails.values()
+    Map<String, OzoneKey> sortedKey = new TreeMap<String, OzoneKey>(keyDetails);
+    return sortedKey.values()
         .stream()
         .filter(key -> key.getName().compareTo(prevKey) > 0)
         .filter(key -> key.getName().startsWith(keyPrefix))
