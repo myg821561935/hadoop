@@ -36,11 +36,15 @@ import org.apache.hadoop.hdds.scm.ScmUtils;
 import org.apache.hadoop.hdds.scm.chillmode.ChillModePrecheck;
 import org.apache.hadoop.hdds.scm.container.ContainerID;
 import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
+import org.apache.hadoop.hdds.scm.container.ContainerReplica;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
 import org.apache.hadoop.hdds.scm.container.ContainerInfo;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException.ResultCodes;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineManager;
+import org.apache.hadoop.hdds.scm.pipeline.RatisPipelineUtils;
 import org.apache.hadoop.hdds.scm.protocol.StorageContainerLocationProtocol;
 import org.apache.hadoop.hdds.scm.protocolPB.StorageContainerLocationProtocolPB;
 import org.apache.hadoop.hdds.server.events.EventHandler;
@@ -57,10 +61,10 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import static org.apache.hadoop.hdds.protocol.proto
     .StorageContainerLocationProtocolProtos
@@ -161,11 +165,13 @@ public class SCMClientProtocolServer implements
       replicationType, HddsProtos.ReplicationFactor factor,
       String owner) throws IOException {
     ScmUtils.preCheck(ScmOps.allocateContainer, chillModePrecheck);
-    String remoteUser = getRpcRemoteUsername();
-    getScm().checkAdminAccess(remoteUser);
+    getScm().checkAdminAccess(getRpcRemoteUsername());
 
-    return scm.getContainerManager()
+    final ContainerInfo container = scm.getContainerManager()
         .allocateContainer(replicationType, factor, owner);
+    final Pipeline pipeline = scm.getPipelineManager()
+        .getPipeline(container.getPipelineID());
+    return new ContainerWithPipeline(container, pipeline);
   }
 
   @Override
@@ -191,8 +197,26 @@ public class SCMClientProtocolServer implements
       }
     }
     getScm().checkAdminAccess(null);
-    return scm.getContainerManager()
-        .getContainerWithPipeline(ContainerID.valueof(containerID));
+
+    final ContainerID id = ContainerID.valueof(containerID);
+    final ContainerInfo container = scm.getContainerManager().getContainer(id);
+    final Pipeline pipeline;
+
+    if (container.isOpen()) {
+      // Ratis pipeline
+      pipeline = scm.getPipelineManager()
+          .getPipeline(container.getPipelineID());
+    } else {
+      pipeline = scm.getPipelineManager().createPipeline(
+          HddsProtos.ReplicationType.STAND_ALONE,
+          container.getReplicationFactor(),
+          scm.getContainerManager()
+              .getContainerReplicas(id).stream()
+              .map(ContainerReplica::getDatanodeDetails)
+              .collect(Collectors.toList()));
+    }
+
+    return new ContainerWithPipeline(container, pipeline);
   }
 
   /**
@@ -286,6 +310,21 @@ public class SCMClientProtocolServer implements
   }
 
   @Override
+  public List<Pipeline> listPipelines() {
+    return scm.getPipelineManager().getPipelines();
+  }
+
+  @Override
+  public void closePipeline(HddsProtos.PipelineID pipelineID)
+      throws IOException {
+    PipelineManager pipelineManager = scm.getPipelineManager();
+    Pipeline pipeline =
+        pipelineManager.getPipeline(PipelineID.getFromProtobuf(pipelineID));
+    RatisPipelineUtils
+        .finalizeAndDestroyPipeline(pipelineManager, pipeline, conf, false);
+  }
+
+  @Override
   public ScmInfo getScmInfo() throws IOException {
     ScmInfo.Builder builder =
         new ScmInfo.Builder()
@@ -332,7 +371,7 @@ public class SCMClientProtocolServer implements
    */
   public List<DatanodeDetails> queryNode(HddsProtos.NodeState state) {
     Preconditions.checkNotNull(state, "Node Query set cannot be null");
-    return new LinkedList<>(queryNodeState(state));
+    return new ArrayList<>(queryNodeState(state));
   }
 
   @VisibleForTesting

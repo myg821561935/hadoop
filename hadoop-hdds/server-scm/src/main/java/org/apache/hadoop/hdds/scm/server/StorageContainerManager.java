@@ -207,13 +207,13 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
     pipelineManager = new SCMPipelineManager(conf, scmNodeManager, eventQueue);
     containerManager = new SCMContainerManager(
         conf, scmNodeManager, pipelineManager, eventQueue);
-    scmBlockManager = new BlockManagerImpl(
-        conf, scmNodeManager, containerManager, eventQueue);
+    scmBlockManager = new BlockManagerImpl(conf, scmNodeManager,
+        pipelineManager, containerManager, eventQueue);
 
     replicationStatus = new ReplicationActivityStatus();
 
     CloseContainerEventHandler closeContainerHandler =
-        new CloseContainerEventHandler(containerManager);
+        new CloseContainerEventHandler(pipelineManager, containerManager);
     NodeReportHandler nodeReportHandler =
         new NodeReportHandler(scmNodeManager);
     PipelineReportHandler pipelineReportHandler =
@@ -223,7 +223,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
 
     NewNodeHandler newNodeHandler = new NewNodeHandler();
     StaleNodeHandler staleNodeHandler =
-        new StaleNodeHandler(scmNodeManager, pipelineManager);
+        new StaleNodeHandler(scmNodeManager, pipelineManager, conf);
     DeadNodeHandler deadNodeHandler = new DeadNodeHandler(scmNodeManager,
         containerManager);
     ContainerActionsHandler actionsHandler = new ContainerActionsHandler();
@@ -239,7 +239,7 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
             pipelineManager, containerManager);
 
     PipelineActionHandler pipelineActionHandler =
-        new PipelineActionHandler(pipelineManager);
+        new PipelineActionHandler(pipelineManager, conf);
 
     long watcherTimeout =
         conf.getTimeDuration(ScmConfigKeys.HDDS_SCM_WATCHER_TIMEOUT,

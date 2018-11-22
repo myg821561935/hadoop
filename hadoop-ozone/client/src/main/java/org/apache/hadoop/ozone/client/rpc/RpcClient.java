@@ -20,22 +20,22 @@ package org.apache.hadoop.ozone.client.rpc;
 
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.hdds.scm.client.HddsClientUtils;
 import org.apache.hadoop.io.IOUtils;
-import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.ipc.Client;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ozone.OmUtils;
+import org.apache.hadoop.ozone.OzoneConfigKeys;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.client.*;
 import org.apache.hadoop.hdds.client.OzoneQuota;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.ozone.client.VolumeArgs;
-import org.apache.hadoop.ozone.client.OzoneClientUtils;
 import org.apache.hadoop.ozone.client.io.ChunkGroupInputStream;
 import org.apache.hadoop.ozone.client.io.ChunkGroupOutputStream;
 import org.apache.hadoop.ozone.client.io.LengthInputStream;
@@ -72,6 +72,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -94,7 +95,10 @@ public class RpcClient implements ClientProtocol {
   private final UserGroupInformation ugi;
   private final OzoneAcl.OzoneACLRights userRights;
   private final OzoneAcl.OzoneACLRights groupRights;
-  private final RetryPolicy retryPolicy;
+  private final long streamBufferFlushSize;
+  private final long streamBufferMaxSize;
+  private final long blockSize;
+  private final long watchTimeout;
 
    /**
     * Creates RpcClient instance with the given configuration.
@@ -135,20 +139,33 @@ public class RpcClient implements ClientProtocol {
                 Client.getRpcTimeout(conf)));
 
     this.xceiverClientManager = new XceiverClientManager(conf);
-    retryPolicy = OzoneClientUtils.createRetryPolicy(conf);
 
-    int configuredChunkSize = conf.getInt(
-        ScmConfigKeys.OZONE_SCM_CHUNK_SIZE_KEY,
-        ScmConfigKeys.OZONE_SCM_CHUNK_SIZE_DEFAULT);
-    if(configuredChunkSize > ScmConfigKeys.OZONE_SCM_CHUNK_MAX_SIZE) {
+    int configuredChunkSize = (int) conf
+        .getStorageSize(ScmConfigKeys.OZONE_SCM_CHUNK_SIZE_KEY,
+            ScmConfigKeys.OZONE_SCM_CHUNK_SIZE_DEFAULT, StorageUnit.BYTES);
+    if(configuredChunkSize > OzoneConsts.OZONE_SCM_CHUNK_MAX_SIZE) {
       LOG.warn("The chunk size ({}) is not allowed to be more than"
               + " the maximum size ({}),"
               + " resetting to the maximum size.",
-          configuredChunkSize, ScmConfigKeys.OZONE_SCM_CHUNK_MAX_SIZE);
-      chunkSize = ScmConfigKeys.OZONE_SCM_CHUNK_MAX_SIZE;
+          configuredChunkSize, OzoneConsts.OZONE_SCM_CHUNK_MAX_SIZE);
+      chunkSize = OzoneConsts.OZONE_SCM_CHUNK_MAX_SIZE;
     } else {
       chunkSize = configuredChunkSize;
     }
+    streamBufferFlushSize = (long) conf
+        .getStorageSize(OzoneConfigKeys.OZONE_CLIENT_STREAM_BUFFER_FLUSH_SIZE,
+            OzoneConfigKeys.OZONE_CLIENT_STREAM_BUFFER_FLUSH_SIZE_DEFAULT,
+            StorageUnit.BYTES);
+    streamBufferMaxSize = (long) conf
+        .getStorageSize(OzoneConfigKeys.OZONE_CLIENT_STREAM_BUFFER_MAX_SIZE,
+            OzoneConfigKeys.OZONE_CLIENT_STREAM_BUFFER_MAX_SIZE_DEFAULT,
+            StorageUnit.BYTES);
+    blockSize = (long) conf.getStorageSize(OzoneConfigKeys.OZONE_SCM_BLOCK_SIZE,
+        OzoneConfigKeys.OZONE_SCM_BLOCK_SIZE_DEFAULT, StorageUnit.BYTES);
+    watchTimeout =
+        conf.getTimeDuration(OzoneConfigKeys.OZONE_CLIENT_WATCH_REQUEST_TIMEOUT,
+            OzoneConfigKeys.OZONE_CLIENT_WATCH_REQUEST_TIMEOUT_DEFAULT,
+            TimeUnit.MILLISECONDS);
   }
 
   private InetSocketAddress getScmAddressForClient() throws IOException {
@@ -468,7 +485,10 @@ public class RpcClient implements ClientProtocol {
             .setRequestID(requestId)
             .setType(HddsProtos.ReplicationType.valueOf(type.toString()))
             .setFactor(HddsProtos.ReplicationFactor.valueOf(factor.getValue()))
-            .setRetryPolicy(retryPolicy)
+            .setStreamBufferFlushSize(streamBufferFlushSize)
+            .setStreamBufferMaxSize(streamBufferMaxSize)
+            .setWatchTimeout(watchTimeout)
+            .setBlockSize(blockSize)
             .build();
     groupOutputStream.addPreallocateBlocks(
         openKey.getKeyInfo().getLatestVersionLocations(),
@@ -593,6 +613,7 @@ public class RpcClient implements ClientProtocol {
   }
 
   @Override
+  @SuppressWarnings("StringSplitter")
   public String getOzoneVolumeName(String s3BucketName) throws IOException {
     String mapping = getOzoneBucketMapping(s3BucketName);
     return mapping.split("/")[0];
@@ -600,9 +621,29 @@ public class RpcClient implements ClientProtocol {
   }
 
   @Override
+  @SuppressWarnings("StringSplitter")
   public String getOzoneBucketName(String s3BucketName) throws IOException {
     String mapping = getOzoneBucketMapping(s3BucketName);
     return mapping.split("/")[1];
+  }
+
+  @Override
+  public List<OzoneBucket> listS3Buckets(String userName, String bucketPrefix,
+                                         String prevBucket, int maxListResult)
+      throws IOException {
+    List<OmBucketInfo> buckets = ozoneManagerClient.listS3Buckets(
+        userName, prevBucket, bucketPrefix, maxListResult);
+
+    return buckets.stream().map(bucket -> new OzoneBucket(
+        conf,
+        this,
+        bucket.getVolumeName(),
+        bucket.getBucketName(),
+        bucket.getAcls(),
+        bucket.getStorageType(),
+        bucket.getIsVersionEnabled(),
+        bucket.getCreationTime()))
+        .collect(Collectors.toList());
   }
 
   @Override

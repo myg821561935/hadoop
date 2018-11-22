@@ -2162,6 +2162,15 @@ public class TestYarnCLI {
     pw.println(" -components <Components>                 Works with -upgrade option to");
     pw.println("                                          trigger the upgrade of specified");
     pw.println("                                          components of the application.");
+    pw.println("                                          Multiple components should be");
+    pw.println("                                          separated by commas.");
+    pw.println(" -decommission <Application Name>         Decommissions component");
+    pw.println("                                          instances for an application /");
+    pw.println("                                          long-running service. Requires");
+    pw.println("                                          -instances option. Supports");
+    pw.println("                                          -appTypes option to specify");
+    pw.println("                                          which client implementation to");
+    pw.println("                                          use.");
     pw.println(" -destroy <Application Name>              Destroys a saved application");
     pw.println("                                          specification and removes all");
     pw.println("                                          application data permanently.");
@@ -2203,7 +2212,11 @@ public class TestYarnCLI {
     pw.println(" -instances <Component Instances>         Works with -upgrade option to");
     pw.println("                                          trigger the upgrade of specified");
     pw.println("                                          component instances of the");
-    pw.println("                                          application.");
+    pw.println("                                          application. Also works with");
+    pw.println("                                          -decommission option to");
+    pw.println("                                          decommission specified component");
+    pw.println("                                          instances. Multiple instances");
+    pw.println("                                          should be separated by commas.");
     pw.println(" -kill <Application ID>                   Kills the application. Set of");
     pw.println("                                          applications can be provided");
     pw.println("                                          separated with space");
@@ -2304,6 +2317,7 @@ public class TestYarnCLI {
     pw.println(" -components <arg>                Works with -list to filter instances based on input comma-separated list of component names.");
     pw.println(" -help                            Displays help for all commands.");
     pw.println(" -list <Application Name or Attempt ID>   List containers for application attempt  when application attempt ID is provided. When application name is provided, then it finds the instances of the application based on app's own implementation, and -appTypes option must be specified unless it is the default yarn-service type. With app name, it supports optional use of -version to filter instances based on app version, -components to filter instances based on component names, -states to filter instances based on instance state.");
+    pw.println(" -shell <Container ID> Run a shell in the container.");
     pw.println(" -signal <container ID [signal command]> Signal the container.");
     pw.println("The available signal commands are ");
     pw.println(java.util.Arrays.asList(SignalContainerCommand.values()));

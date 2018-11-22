@@ -337,9 +337,22 @@ public class NamenodeWebHdfsMethods {
     throw new IOException("No active nodes contain this block");
   }
 
-  private Token<? extends TokenIdentifier> generateDelegationToken(
-      final NameNode namenode, final UserGroupInformation ugi,
+  public long renewDelegationToken(Token<DelegationTokenIdentifier> token)
+      throws IOException {
+    ClientProtocol cp = getRpcClientProtocol();
+    return cp.renewDelegationToken(token);
+  }
+
+  public void cancelDelegationToken(Token<DelegationTokenIdentifier> token)
+          throws IOException {
+    ClientProtocol cp = getRpcClientProtocol();
+    cp.cancelDelegationToken(token);
+  }
+
+  public Token<? extends TokenIdentifier> generateDelegationToken(
+      final UserGroupInformation ugi,
       final String renewer) throws IOException {
+    final NameNode namenode = (NameNode)context.getAttribute("name.node");
     final Credentials c = DelegationTokenSecretManager.createCredentials(
         namenode, ugi, renewer != null? renewer: ugi.getShortUserName());
     if (c == null) {
@@ -384,7 +397,7 @@ public class NamenodeWebHdfsMethods {
     } else {
       //generate a token
       final Token<? extends TokenIdentifier> t = generateDelegationToken(
-          namenode, ugi, null);
+          ugi, null);
       delegationQuery = "&" + new DelegationParam(t.encodeToUrlString());
     }
 
@@ -479,14 +492,16 @@ public class NamenodeWebHdfsMethods {
       @QueryParam(NoRedirectParam.NAME) @DefaultValue(NoRedirectParam.DEFAULT)
           final NoRedirectParam noredirect,
       @QueryParam(StoragePolicyParam.NAME) @DefaultValue(StoragePolicyParam
-          .DEFAULT) final StoragePolicyParam policyName
+          .DEFAULT) final StoragePolicyParam policyName,
+      @QueryParam(ECPolicyParam.NAME) @DefaultValue(ECPolicyParam
+              .DEFAULT) final ECPolicyParam ecpolicy
       ) throws IOException, InterruptedException {
     return put(ugi, delegation, username, doAsUser, ROOT, op, destination,
         owner, group, permission, unmaskedPermission, overwrite, bufferSize,
         replication, blockSize, modificationTime, accessTime, renameOptions,
         createParent, delegationTokenArgument, aclPermission, xattrName,
         xattrValue, xattrSetFlag, snapshotName, oldSnapshotName,
-        excludeDatanodes, createFlagParam, noredirect, policyName);
+        excludeDatanodes, createFlagParam, noredirect, policyName, ecpolicy);
   }
 
   /** Validate all required params. */
@@ -566,7 +581,9 @@ public class NamenodeWebHdfsMethods {
       @QueryParam(NoRedirectParam.NAME) @DefaultValue(NoRedirectParam.DEFAULT)
           final NoRedirectParam noredirect,
       @QueryParam(StoragePolicyParam.NAME) @DefaultValue(StoragePolicyParam
-          .DEFAULT) final StoragePolicyParam policyName
+          .DEFAULT) final StoragePolicyParam policyName,
+      @QueryParam(ECPolicyParam.NAME) @DefaultValue(ECPolicyParam.DEFAULT)
+      final ECPolicyParam ecpolicy
       ) throws IOException, InterruptedException {
 
     init(ugi, delegation, username, doAsUser, path, op, destination, owner,
@@ -586,7 +603,7 @@ public class NamenodeWebHdfsMethods {
               renameOptions, createParent, delegationTokenArgument,
               aclPermission, xattrName, xattrValue, xattrSetFlag,
               snapshotName, oldSnapshotName, excludeDatanodes,
-              createFlagParam, noredirect, policyName);
+              createFlagParam, noredirect, policyName, ecpolicy);
       }
     });
   }
@@ -621,7 +638,8 @@ public class NamenodeWebHdfsMethods {
       final ExcludeDatanodesParam exclDatanodes,
       final CreateFlagParam createFlagParam,
       final NoRedirectParam noredirectParam,
-      final StoragePolicyParam policyName
+      final StoragePolicyParam policyName,
+      final ECPolicyParam ecpolicy
       ) throws IOException, URISyntaxException {
     final Configuration conf = (Configuration)context.getAttribute(JspHelper.CURRENT_CONF);
     final ClientProtocol cp = getRpcClientProtocol();
@@ -705,7 +723,7 @@ public class NamenodeWebHdfsMethods {
       validateOpParams(op, delegationTokenArgument);
       final Token<DelegationTokenIdentifier> token = new Token<DelegationTokenIdentifier>();
       token.decodeFromUrlString(delegationTokenArgument.getValue());
-      final long expiryTime = cp.renewDelegationToken(token);
+      final long expiryTime = renewDelegationToken(token);
       final String js = JsonUtil.toJsonString("long", expiryTime);
       return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
     }
@@ -714,7 +732,7 @@ public class NamenodeWebHdfsMethods {
       validateOpParams(op, delegationTokenArgument);
       final Token<DelegationTokenIdentifier> token = new Token<DelegationTokenIdentifier>();
       token.decodeFromUrlString(delegationTokenArgument.getValue());
-      cp.cancelDelegationToken(token);
+      cancelDelegationToken(token);
       return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
     }
     case MODIFYACLENTRIES: {
@@ -782,6 +800,16 @@ public class NamenodeWebHdfsMethods {
       cp.setStoragePolicy(fullpath, policyName.getValue());
       return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
     }
+    case ENABLEECPOLICY:
+      validateOpParams(op, ecpolicy);
+      cp.enableErasureCodingPolicy(ecpolicy.getValue());
+      return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
+
+    case DISABLEECPOLICY:
+      validateOpParams(op, ecpolicy);
+      cp.disableErasureCodingPolicy(ecpolicy.getValue());
+      return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
+
     default:
       throw new UnsupportedOperationException(op + " is not supported");
     }
@@ -1138,9 +1166,8 @@ public class NamenodeWebHdfsMethods {
         throw new IllegalArgumentException(delegation.getName()
             + " parameter is not null.");
       }
-      final NameNode namenode = (NameNode)context.getAttribute("name.node");
       final Token<? extends TokenIdentifier> token = generateDelegationToken(
-          namenode, ugi, renewer.getValue());
+          ugi, renewer.getValue());
 
       final String setServiceName = tokenService.getValue();
       final String setKind = tokenKind.getValue();

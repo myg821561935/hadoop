@@ -136,7 +136,7 @@ public class AliyunOSSFileSystem extends FileSystem {
             key,
             uploadPartSize,
             new SemaphoredDelegatingExecutor(boundedThreadPool,
-                blockOutputActiveBlocks, true)), (Statistics)(null));
+                blockOutputActiveBlocks, true)), statistics);
   }
 
   /**
@@ -298,6 +298,11 @@ public class AliyunOSSFileSystem extends FileSystem {
   }
 
   @Override
+  public int getDefaultPort() {
+    return Constants.OSS_DEFAULT_PORT;
+  }
+
+  @Override
   public Path getWorkingDirectory() {
     return workingDir;
   }
@@ -405,7 +410,6 @@ public class AliyunOSSFileSystem extends FileSystem {
 
       ObjectListing objects = store.listObjects(key, maxKeys, null, false);
       while (true) {
-        statistics.incrementReadOps(1);
         for (OSSObjectSummary objectSummary : objects.getObjectSummaries()) {
           String objKey = objectSummary.getKey();
           if (objKey.equals(key + "/")) {
@@ -446,7 +450,6 @@ public class AliyunOSSFileSystem extends FileSystem {
           }
           String nextMarker = objects.getNextMarker();
           objects = store.listObjects(key, maxKeys, nextMarker, false);
-          statistics.incrementReadOps(1);
         } else {
           break;
         }
@@ -694,7 +697,6 @@ public class AliyunOSSFileSystem extends FileSystem {
         new SemaphoredDelegatingExecutor(boundedCopyThreadPool,
             maxConcurrentCopyTasksPerDir, true));
     ObjectListing objects = store.listObjects(srcKey, maxKeys, null, true);
-    statistics.incrementReadOps(1);
     // Copy files from src folder to dst
     int copiesToFinish = 0;
     while (true) {
@@ -717,7 +719,6 @@ public class AliyunOSSFileSystem extends FileSystem {
       if (objects.isTruncated()) {
         String nextMarker = objects.getNextMarker();
         objects = store.listObjects(srcKey, maxKeys, nextMarker, true);
-        statistics.incrementReadOps(1);
       } else {
         break;
       }

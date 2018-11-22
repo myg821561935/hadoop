@@ -15,10 +15,13 @@
 package org.apache.hadoop.yarn.submarine.runtimes.yarnservice;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
+import org.apache.hadoop.yarn.client.api.AppAdminClient;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.service.api.ServiceApiConstants;
 import org.apache.hadoop.yarn.service.api.records.Artifact;
@@ -27,7 +30,8 @@ import org.apache.hadoop.yarn.service.api.records.ConfigFile;
 import org.apache.hadoop.yarn.service.api.records.Resource;
 import org.apache.hadoop.yarn.service.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.service.api.records.Service;
-import org.apache.hadoop.yarn.service.client.ServiceClient;
+import org.apache.hadoop.yarn.service.api.records.KerberosPrincipal;
+import org.apache.hadoop.yarn.service.utils.ServiceApiUtil;
 import org.apache.hadoop.yarn.submarine.client.cli.param.Quicklink;
 import org.apache.hadoop.yarn.submarine.client.cli.param.RunJobParameters;
 import org.apache.hadoop.yarn.submarine.common.ClientContext;
@@ -53,6 +57,8 @@ import java.util.Set;
 import java.util.StringTokenizer;
 
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
+import static org.apache.hadoop.yarn.service.exceptions.LauncherExitCodes.EXIT_SUCCESS;
+import static org.apache.hadoop.yarn.service.utils.ServiceApiUtil.jsonSerDeser;
 
 /**
  * Submit a job to cluster
@@ -103,10 +109,7 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
   }
 
   private boolean needHdfs(String content) {
-    if (content != null && content.contains("hdfs://")) {
-      return true;
-    }
-    return false;
+    return content != null && content.contains("hdfs://");
   }
 
   private void addHdfsClassPathIfNeeded(RunJobParameters parameters,
@@ -297,8 +300,26 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
   private void uploadToRemoteFileAndLocalizeToContainerWorkDir(Path stagingDir,
       String fileToUpload, String destFilename, Component comp)
       throws IOException {
+    Path uploadedFilePath = uploadToRemoteFile(stagingDir, fileToUpload);
+    locateRemoteFileToContainerWorkDir(destFilename, comp, uploadedFilePath);
+  }
+
+  private void locateRemoteFileToContainerWorkDir(String destFilename,
+      Component comp, Path uploadedFilePath) throws IOException {
     FileSystem fs = FileSystem.get(clientContext.getYarnConfig());
 
+    FileStatus fileStatus = fs.getFileStatus(uploadedFilePath);
+    LOG.info("Uploaded file path = " + fileStatus.getPath());
+
+    // Set it to component's files list
+    comp.getConfiguration().getFiles().add(new ConfigFile().srcFile(
+        fileStatus.getPath().toUri().toString()).destFile(destFilename)
+        .type(ConfigFile.TypeEnum.STATIC));
+  }
+
+  private Path uploadToRemoteFile(Path stagingDir, String fileToUpload) throws
+      IOException {
+    FileSystem fs = FileSystem.get(clientContext.getYarnConfig());
     // Upload to remote FS under staging area
     File localFile = new File(fileToUpload);
     if (!localFile.exists()) {
@@ -317,14 +338,13 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
       fs.copyFromLocalFile(new Path(fileToUpload), uploadedFilePath);
       uploadedFiles.add(uploadedFilePath);
     }
+    return uploadedFilePath;
+  }
 
-    FileStatus fileStatus = fs.getFileStatus(uploadedFilePath);
-    LOG.info("Uploaded file path = " + fileStatus.getPath());
-
-    // Set it to component's files list
-    comp.getConfiguration().getFiles().add(new ConfigFile().srcFile(
-        fileStatus.getPath().toUri().toString()).destFile(destFilename)
-        .type(ConfigFile.TypeEnum.STATIC));
+  private void setPermission(Path destPath, FsPermission permission) throws
+      IOException {
+    FileSystem fs = FileSystem.get(clientContext.getYarnConfig());
+    fs.setPermission(destPath, new FsPermission(permission));
   }
 
   private void handleLaunchCommand(RunJobParameters parameters,
@@ -472,6 +492,7 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
     serviceSpec.setName(parameters.getName());
     serviceSpec.setVersion(String.valueOf(System.currentTimeMillis()));
     serviceSpec.setArtifact(getDockerArtifact(parameters.getDockerImageName()));
+    handleKerberosPrincipal(parameters);
 
     handleServiceEnvs(serviceSpec, parameters);
 
@@ -530,6 +551,46 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
     return serviceSpec;
   }
 
+  private String generateServiceSpecFile(Service service) throws IOException {
+    File serviceSpecFile = File.createTempFile(service.getName(), ".json");
+    String buffer = jsonSerDeser.toJson(service);
+    Writer w = new OutputStreamWriter(new FileOutputStream(serviceSpecFile),
+        "UTF-8");
+    PrintWriter pw = new PrintWriter(w);
+    try {
+      pw.append(buffer);
+    } finally {
+      pw.close();
+    }
+    return serviceSpecFile.getAbsolutePath();
+  }
+
+  private void handleKerberosPrincipal(RunJobParameters parameters) throws
+      IOException {
+    if(StringUtils.isNotBlank(parameters.getKeytab()) && StringUtils
+        .isNotBlank(parameters.getPrincipal())) {
+      String keytab = parameters.getKeytab();
+      String principal = parameters.getPrincipal();
+      if(parameters.isDistributeKeytab()) {
+        Path stagingDir =
+            clientContext.getRemoteDirectoryManager().getJobStagingArea(
+                parameters.getName(), true);
+        Path remoteKeytabPath = uploadToRemoteFile(stagingDir, keytab);
+        //only the owner has read access
+        setPermission(remoteKeytabPath,
+            FsPermission.createImmutable((short)Integer.parseInt("400", 8)));
+        serviceSpec.setKerberosPrincipal(new KerberosPrincipal().keytab(
+            remoteKeytabPath.toString()).principalName(principal));
+      } else {
+        if(!keytab.startsWith("file")) {
+          keytab = "file://" + keytab;
+        }
+        serviceSpec.setKerberosPrincipal(new KerberosPrincipal().keytab(
+            keytab).principalName(principal));
+      }
+    }
+  }
+
   /**
    * {@inheritDoc}
    */
@@ -537,12 +598,29 @@ public class YarnServiceJobSubmitter implements JobSubmitter {
   public ApplicationId submitJob(RunJobParameters parameters)
       throws IOException, YarnException {
     createServiceByParameters(parameters);
-    ServiceClient serviceClient = YarnServiceUtils.createServiceClient(
+    String serviceSpecFile = generateServiceSpecFile(serviceSpec);
+
+    AppAdminClient appAdminClient = YarnServiceUtils.createServiceClient(
         clientContext.getYarnConfig());
-    ApplicationId appid = serviceClient.actionCreate(serviceSpec);
-    serviceClient.stop();
+    int code = appAdminClient.actionLaunch(serviceSpecFile,
+        serviceSpec.getName(), null, null);
+    if(code != EXIT_SUCCESS) {
+      throw new YarnException("Fail to launch application with exit code:" +
+          code);
+    }
+
+    String appStatus=appAdminClient.getStatusString(serviceSpec.getName());
+    Service app=ServiceApiUtil.jsonSerDeser.fromJson(appStatus);
+    if(app.getId() == null) {
+      throw new YarnException("Can't get application id for Service " +
+          serviceSpec.getName());
+    }
+    ApplicationId appid = ApplicationId.fromString(app.getId());
+    appAdminClient.stop();
     return appid;
   }
+
+
 
   @VisibleForTesting
   public Service getServiceSpec() {
