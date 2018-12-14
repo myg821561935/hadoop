@@ -23,6 +23,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.StorageType;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
+    .ChecksumType;
 import org.apache.hadoop.hdds.scm.client.HddsClientUtils;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.ipc.Client;
@@ -42,10 +44,12 @@ import org.apache.hadoop.ozone.client.io.LengthInputStream;
 import org.apache.hadoop.ozone.client.io.OzoneInputStream;
 import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
 import org.apache.hadoop.ozone.client.protocol.ClientProtocol;
+import org.apache.hadoop.ozone.common.Checksum;
 import org.apache.hadoop.ozone.om.helpers.OmBucketArgs;
 import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyArgs;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
@@ -92,6 +96,7 @@ public class RpcClient implements ClientProtocol {
       ozoneManagerClient;
   private final XceiverClientManager xceiverClientManager;
   private final int chunkSize;
+  private final Checksum checksum;
   private final UserGroupInformation ugi;
   private final OzoneAcl.OzoneACLRights userRights;
   private final OzoneAcl.OzoneACLRights groupRights;
@@ -166,6 +171,27 @@ public class RpcClient implements ClientProtocol {
         conf.getTimeDuration(OzoneConfigKeys.OZONE_CLIENT_WATCH_REQUEST_TIMEOUT,
             OzoneConfigKeys.OZONE_CLIENT_WATCH_REQUEST_TIMEOUT_DEFAULT,
             TimeUnit.MILLISECONDS);
+
+    int configuredChecksumSize = (int) conf.getStorageSize(
+        OzoneConfigKeys.OZONE_CLIENT_BYTES_PER_CHECKSUM,
+        OzoneConfigKeys.OZONE_CLIENT_BYTES_PER_CHECKSUM_DEFAULT,
+        StorageUnit.BYTES);
+    int checksumSize;
+    if(configuredChecksumSize <
+        OzoneConfigKeys.OZONE_CLIENT_BYTES_PER_CHECKSUM_MIN_SIZE) {
+      LOG.warn("The checksum size ({}) is not allowed to be less than the " +
+              "minimum size ({}), resetting to the minimum size.",
+          configuredChecksumSize,
+          OzoneConfigKeys.OZONE_CLIENT_BYTES_PER_CHECKSUM_MIN_SIZE);
+      checksumSize = OzoneConfigKeys.OZONE_CLIENT_BYTES_PER_CHECKSUM_MIN_SIZE;
+    } else {
+      checksumSize = configuredChecksumSize;
+    }
+    String checksumTypeStr = conf.get(
+        OzoneConfigKeys.OZONE_CLIENT_CHECKSUM_TYPE,
+        OzoneConfigKeys.OZONE_CLIENT_CHECKSUM_TYPE_DEFAULT);
+    ChecksumType checksumType = ChecksumType.valueOf(checksumTypeStr);
+    this.checksum = new Checksum(checksumType, checksumSize);
   }
 
   private InetSocketAddress getScmAddressForClient() throws IOException {
@@ -489,6 +515,7 @@ public class RpcClient implements ClientProtocol {
             .setStreamBufferMaxSize(streamBufferMaxSize)
             .setWatchTimeout(watchTimeout)
             .setBlockSize(blockSize)
+            .setChecksum(checksum)
             .build();
     groupOutputStream.addPreallocateBlocks(
         openKey.getKeyInfo().getLatestVersionLocations(),
@@ -652,4 +679,76 @@ public class RpcClient implements ClientProtocol {
     IOUtils.cleanupWithLogger(LOG, ozoneManagerClient);
     IOUtils.cleanupWithLogger(LOG, xceiverClientManager);
   }
+
+  @Override
+  public OmMultipartInfo initiateMultipartUpload(String volumeName,
+                                                String bucketName,
+                                                String keyName,
+                                                ReplicationType type,
+                                                ReplicationFactor factor)
+      throws IOException {
+    HddsClientUtils.verifyResourceName(volumeName, bucketName);
+    HddsClientUtils.checkNotNull(keyName, type, factor);
+    OmKeyArgs keyArgs = new OmKeyArgs.Builder()
+        .setVolumeName(volumeName)
+        .setBucketName(bucketName)
+        .setKeyName(keyName)
+        .setType(HddsProtos.ReplicationType.valueOf(type.toString()))
+        .setFactor(HddsProtos.ReplicationFactor.valueOf(factor.getValue()))
+        .build();
+    OmMultipartInfo multipartInfo = ozoneManagerClient
+        .initiateMultipartUpload(keyArgs);
+    return multipartInfo;
+  }
+
+  @Override
+  public OzoneOutputStream createMultipartKey(String volumeName,
+                                              String bucketName,
+                                              String keyName,
+                                              long size,
+                                              int partNumber,
+                                              String uploadID)
+      throws IOException {
+    HddsClientUtils.verifyResourceName(volumeName, bucketName);
+    HddsClientUtils.checkNotNull(keyName, uploadID);
+    Preconditions.checkArgument(partNumber > 0, "Part number should be " +
+        "greater than zero");
+    Preconditions.checkArgument(size >=0, "size should be greater than or " +
+        "equal to zero");
+    String requestId = UUID.randomUUID().toString();
+    OmKeyArgs keyArgs = new OmKeyArgs.Builder()
+        .setVolumeName(volumeName)
+        .setBucketName(bucketName)
+        .setKeyName(keyName)
+        .setDataSize(size)
+        .setIsMultipartKey(true)
+        .setMultipartUploadID(uploadID)
+        .build();
+
+    OpenKeySession openKey = ozoneManagerClient.openKey(keyArgs);
+    ChunkGroupOutputStream groupOutputStream =
+        new ChunkGroupOutputStream.Builder()
+            .setHandler(openKey)
+            .setXceiverClientManager(xceiverClientManager)
+            .setScmClient(storageContainerLocationClient)
+            .setOmClient(ozoneManagerClient)
+            .setChunkSize(chunkSize)
+            .setRequestID(requestId)
+            .setType(openKey.getKeyInfo().getType())
+            .setFactor(openKey.getKeyInfo().getFactor())
+            .setStreamBufferFlushSize(streamBufferFlushSize)
+            .setStreamBufferMaxSize(streamBufferMaxSize)
+            .setWatchTimeout(watchTimeout)
+            .setBlockSize(blockSize)
+            .setChecksum(checksum)
+            .setMultipartNumber(partNumber)
+            .setMultipartUploadID(uploadID)
+            .setIsMultipartKey(true)
+            .build();
+    groupOutputStream.addPreallocateBlocks(
+        openKey.getKeyInfo().getLatestVersionLocations(),
+        openKey.getOpenVersion());
+    return new OzoneOutputStream(groupOutputStream);
+  }
+
 }

@@ -40,7 +40,7 @@ import org.apache.hadoop.yarn.server.nodemanager.containermanager.resourceplugin
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.runtime.ContainerRuntimeConstants;
 import org.apache.hadoop.yarn.server.nodemanager.recovery.NMNullStateStoreService;
 import org.apache.hadoop.yarn.server.nodemanager.recovery.NMStateStoreService;
-import org.apache.hadoop.yarn.util.resource.TestResourceUtils;
+import org.apache.hadoop.yarn.util.resource.CustomResourceTypesConfigurationProvider;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -74,7 +74,8 @@ public class TestGpuResourceHandler {
 
   @Before
   public void setup() {
-    TestResourceUtils.addNewTypesToResources(ResourceInformation.GPU_URI);
+    CustomResourceTypesConfigurationProvider.
+        initResourceTypes(ResourceInformation.GPU_URI);
 
     mockCGroupsHandler = mock(CGroupsHandler.class);
     mockPrivilegedExecutor = mock(PrivilegedOperationExecutor.class);
@@ -465,7 +466,7 @@ public class TestGpuResourceHandler {
       caughtException = true;
     }
     Assert.assertTrue(
-        "Should fail since requested device Id is not in allowed list",
+        "Should fail since requested device Id is already assigned",
         caughtException);
 
     // Make sure internal state not changed.

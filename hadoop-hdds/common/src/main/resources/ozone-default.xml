@@ -53,6 +53,14 @@
     </description>
   </property>
   <property>
+    <name>dfs.container.chunk.write.sync</name>
+    <value>true</value>
+    <tag>OZONE, CONTAINER, MANAGEMENT</tag>
+    <description>Determines whether the chunk writes in the container happen as
+      sync I/0 or buffered I/O operation.
+    </description>
+  </property>
+  <property>
     <name>dfs.container.ratis.statemachinedata.sync.timeout</name>
     <value>10s</value>
     <tag>OZONE, DEBUG, CONTAINER, RATIS</tag>
@@ -190,6 +198,14 @@
     </description>
   </property>
   <property>
+    <name>dfs.container.ratis.statemachine.cache.expiry.interval</name>
+    <value>10s</value>
+    <tag>OZONE, RATIS, PERFORMANCE</tag>
+    <description>The interval till which the stateMachine data in ratis
+      will be cached inside the ContainerStateMachine.
+    </description>
+  </property>
+  <property>
     <name>dfs.ratis.client.request.timeout.duration</name>
     <value>3s</value>
     <tag>OZONE, RATIS, MANAGEMENT</tag>
@@ -270,6 +286,17 @@
       datanode periodically send pipeline report to SCM. Unit could be
       defined with postfix (ns,ms,s,m,h,d)</description>
   </property>
+
+
+  <property>
+    <name>hdds.prometheus.endpoint.enabled</name>
+    <value>false</value>
+    <tag>OZONE, MANAGEMENT</tag>
+    <description>Enable prometheus compatible metric page on the HTTP
+      servers.
+    </description>
+  </property>
+
   <!--Ozone Settings-->
   <property>
     <name>ozone.administrators</name>
@@ -338,8 +365,8 @@
     <name>ozone.client.stream.buffer.flush.size</name>
     <value>64MB</value>
     <tag>OZONE, CLIENT</tag>
-    <description>Size in mb which determines at what buffer position , a partial
-      flush will be initiated during write. It should be ideally a mutiple
+    <description>Size which determines at what buffer position , a partial
+      flush will be initiated during write. It should be ideally a multiple
       of chunkSize.
     </description>
   </property>
@@ -347,8 +374,8 @@
     <name>ozone.client.stream.buffer.max.size</name>
     <value>128MB</value>
     <tag>OZONE, CLIENT</tag>
-    <description>Size in mb which determines at what buffer position ,
-      write call be blocked till acknowledgement of the fisrt partial flush
+    <description>Size which determines at what buffer position,
+      write call be blocked till acknowledgement of the first partial flush
       happens by all servers.
     </description>
   </property>
@@ -1111,7 +1138,8 @@
 
   <property>
     <name>ozone.tags.system</name>
-    <value>OZONE,MANAGEMENT,SECURITY,PERFORMANCE,DEBUG,CLIENT,SERVER,OM,SCM,CRITICAL,RATIS,CONTAINER,REQUIRED,REST,STORAGE,PIPELINE,STANDALONE,S3GATEWAY</value>
+    <value>OZONE,MANAGEMENT,SECURITY,PERFORMANCE,DEBUG,CLIENT,SERVER,OM,SCM,
+      CRITICAL,RATIS,CONTAINER,REQUIRED,REST,STORAGE,PIPELINE,STANDALONE,S3GATEWAY,ACL</value>
   </property>
 
 
@@ -1217,6 +1245,15 @@
     <tag>HDDS,SCM,OPERATION</tag>
     <description>Minimum DataNodes which should be registered to get SCM out of
       chill mode.
+    </description>
+  </property>
+
+  <property>
+    <name>hdds.scm.chillmode.pipeline-availability.check</name>
+    <value>false</value>
+    <tag>HDDS,SCM,OPERATION</tag>
+    <description>
+      Boolean value to enable pipeline availability check during SCM chill mode.
     </description>
   </property>
 
@@ -1361,5 +1398,133 @@
     </description>
   </property>
 
+  <property>
+    <name>ozone.client.checksum.type</name>
+    <value>SHA256</value>
+    <tag>OZONE, CLIENT, MANAGEMENT</tag>
+    <description>The checksum type [NONE/ CRC32/ CRC32C/ SHA256/ MD5] determines
+      which algorithm would be used to compute checksum for chunk data.
+      Default checksum type is SHA256.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.client.bytes.per.checksum</name>
+    <value>1MB</value>
+    <tag>OZONE, CLIENT, MANAGEMENT</tag>
+    <description>Checksum will be computed for every bytes per checksum number
+      of bytes and stored sequentially. The minimum value for this config is
+      256KB.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.enable</name>
+    <value>false</value>
+    <tag>OZONE, OM, RATIS, MANAGEMENT</tag>
+    <description>Property to enable or disable Ratis server on OM.
+    Please note - this is a temporary property to disable OM Ratis server.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.port</name>
+    <value>9872</value>
+    <tag>OZONE, OM, RATIS</tag>
+    <description>
+      The port number of the OzoneManager's Ratis server.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.random.port</name>
+    <value>false</value>
+    <tag>OZONE, OM, RATIS, DEBUG</tag>
+    <description>Allocates a random free port for OM's Ratis server. This is
+      used only while running unit tests.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.rpc.type</name>
+    <value>GRPC</value>
+    <tag>OZONE, OM, RATIS, MANAGEMENT</tag>
+    <description>Ratis supports different kinds of transports like netty, GRPC,
+      Hadoop RPC etc. This picks one of those for this cluster.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.storage.dir</name>
+    <value/>
+    <tag>OZONE, OM, STORAGE, MANAGEMENT, RATIS</tag>
+    <description>This directory is used for storing OM's Ratis metadata like
+      logs. If this is not set then default metadata dirs is used. A warning
+      will be logged if this not set. Ideally, this should be mapped to a
+      fast disk like an SSD.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.segment.size</name>
+    <value>16KB</value>
+    <tag>OZONE, OM, RATIS, PERFORMANCE</tag>
+    <description>The size of the raft segment used by Apache Ratis on OM.
+      (16 KB by default)
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.segment.preallocated.size</name>
+    <value>128MB</value>
+    <tag>OZONE, OM, RATIS, PERFORMANCE</tag>
+    <description>The size of the buffer which is preallocated for raft segment
+      used by Apache Ratis on OM.(128 MB by default)
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.server.request.timeout</name>
+    <value>3s</value>
+    <tag>OZONE, OM, RATIS, MANAGEMENT</tag>
+    <description>The timeout duration for OM's ratis server request .</description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.server.retry.cache.timeout</name>
+    <value>600000ms</value>
+    <tag>OZONE, OM, RATIS, MANAGEMENT</tag>
+    <description>Retry Cache entry timeout for OM's ratis server.</description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.minimum.timeout</name>
+    <value>1s</value>
+    <tag>OZONE, OM, RATIS, MANAGEMENT</tag>
+    <description>The minimum timeout duration for OM's Ratis server rpc.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.om.ratis.client.request.timeout</name>
+    <value>3s</value>
+    <tag>OZONE, OM, RATIS, MANAGEMENT</tag>
+    <description>The timeout duration for OM Ratis client request.
+    </description>
+  </property>
+
+  <property>
+    <name>ozone.acl.authorizer.class</name>
+    <value>org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer</value>
+    <tag>OZONE, SECURITY, ACL</tag>
+    <description>Acl authorizer for Ozone.
+    </description>
+  </property>
+  <property>
+    <name>ozone.acl.enabled</name>
+    <value>false</value>
+    <tag>OZONE, SECURITY, ACL</tag>
+    <description>Key to enable/disable ozone acls.</description>
+  </property>
 
 </configuration>

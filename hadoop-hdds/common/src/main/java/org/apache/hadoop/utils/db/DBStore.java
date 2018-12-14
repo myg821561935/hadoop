@@ -41,7 +41,19 @@ public interface DBStore extends AutoCloseable {
    * @return - TableStore.
    * @throws IOException on Failure
    */
-  Table getTable(String name) throws IOException;
+  Table<byte[], byte[]> getTable(String name) throws IOException;
+
+  /**
+   * Gets an existing TableStore with implicit key/value conversion.
+   *
+   * @param name - Name of the TableStore to get
+   * @param keyType
+   * @param valueType
+   * @return - TableStore.
+   * @throws IOException on Failure
+   */
+  <KEY, VALUE> Table<KEY, VALUE> getTable(String name,
+      Class<KEY> keyType, Class<VALUE> valueType) throws IOException;
 
   /**
    * Lists the Known list of Tables in a DB.
@@ -67,7 +79,8 @@ public interface DBStore extends AutoCloseable {
    * @param dest - Destination Table.
    * @throws IOException on Failure
    */
-  void move(byte[] key, Table source, Table dest) throws IOException;
+  <KEY, VALUE> void move(KEY key, Table<KEY, VALUE> source,
+                         Table<KEY, VALUE> dest) throws IOException;
 
   /**
    * Moves a key from the Source Table to the destination Table and updates the
@@ -79,7 +92,8 @@ public interface DBStore extends AutoCloseable {
    * @param dest - Destination Table.
    * @throws IOException on Failure
    */
-  void move(byte[] key, byte[] value, Table source, Table dest)
+  <KEY, VALUE> void move(KEY key, VALUE value, Table<KEY, VALUE> source,
+                         Table<KEY, VALUE> dest)
       throws IOException;
 
   /**
@@ -95,8 +109,9 @@ public interface DBStore extends AutoCloseable {
    * @param dest - Destination Table.
    * @throws IOException on Failure
    */
-  void move(byte[] sourceKey, byte[] destKey, byte[] value,
-            Table source, Table dest) throws IOException;
+  <KEY, VALUE> void move(KEY sourceKey, KEY destKey, VALUE value,
+                         Table<KEY, VALUE> source, Table<KEY, VALUE> dest)
+      throws IOException;
 
   /**
    * Returns an estimated count of keys in this DB.

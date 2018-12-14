@@ -20,6 +20,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.conf.StorageUnit;
@@ -30,7 +33,6 @@ import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationType;
 import org.apache.hadoop.hdds.scm.container.common.helpers.AllocatedBlock;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException;
 import org.apache.hadoop.hdds.scm.protocol.ScmBlockLocationProtocol;
-import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.ozone.common.BlockGroup;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes;
@@ -38,9 +40,12 @@ import org.apache.hadoop.ozone.om.helpers.OmKeyArgs;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfoGroup;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartCommitUploadPartInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
-import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.KeyInfo;
-import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.KeyLocationList;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .PartKeyInfo;
 import org.apache.hadoop.util.Time;
 import org.apache.hadoop.utils.BackgroundService;
 import org.apache.hadoop.utils.db.BatchOperation;
@@ -57,6 +62,7 @@ import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_KEY_PREALLOCATION_MA
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_KEY_PREALLOCATION_MAXSIZE_DEFAULT;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_SCM_BLOCK_SIZE;
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_SCM_BLOCK_SIZE_DEFAULT;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -125,8 +131,8 @@ public class KeyManagerImpl implements KeyManager {
 
   private void validateBucket(String volumeName, String bucketName)
       throws IOException {
-    byte[] volumeKey = metadataManager.getVolumeKey(volumeName);
-    byte[] bucketKey = metadataManager.getBucketKey(volumeName, bucketName);
+    String volumeKey = metadataManager.getVolumeKey(volumeName);
+    String bucketKey = metadataManager.getBucketKey(volumeName, bucketName);
 
     //Check if the volume exists
     if (metadataManager.getVolumeTable().get(volumeKey) == null) {
@@ -150,18 +156,17 @@ public class KeyManagerImpl implements KeyManager {
     String bucketName = args.getBucketName();
     String keyName = args.getKeyName();
     validateBucket(volumeName, bucketName);
-    byte[] openKey = metadataManager.getOpenKeyBytes(
+    String openKey = metadataManager.getOpenKey(
         volumeName, bucketName, keyName, clientID);
 
-    byte[] keyData = metadataManager.getOpenKeyTable().get(openKey);
-    if (keyData == null) {
+    OmKeyInfo keyInfo = metadataManager.getOpenKeyTable().get(openKey);
+    if (keyInfo == null) {
       LOG.error("Allocate block for a key not in open status in meta store" +
           " /{}/{}/{} with ID {}", volumeName, bucketName, keyName, clientID);
       throw new OMException("Open Key not found",
           OMException.ResultCodes.FAILED_KEY_NOT_FOUND);
     }
-    OmKeyInfo keyInfo =
-        OmKeyInfo.getFromProtobuf(KeyInfo.parseFrom(keyData));
+
     AllocatedBlock allocatedBlock;
     try {
       allocatedBlock =
@@ -184,7 +189,7 @@ public class KeyManagerImpl implements KeyManager {
     keyInfo.appendNewBlocks(Collections.singletonList(info));
     keyInfo.updateModifcationTime();
     metadataManager.getOpenKeyTable().put(openKey,
-        keyInfo.getProtobuf().toByteArray());
+        keyInfo);
     return info;
   }
 
@@ -201,20 +206,38 @@ public class KeyManagerImpl implements KeyManager {
     ReplicationType type = args.getType();
     long currentTime = Time.monotonicNowNanos();
 
-    // If user does not specify a replication strategy or
-    // replication factor, OM will use defaults.
-    if (factor == null) {
-      factor = useRatis ? ReplicationFactor.THREE : ReplicationFactor.ONE;
-    }
-
-    if (type == null) {
-      type = useRatis ? ReplicationType.RATIS : ReplicationType.STAND_ALONE;
-    }
-
     try {
+      if (args.getIsMultipartKey()) {
+        // When key is multipart upload part key, we should take replication
+        // type and replication factor from original key which has done
+        // initiate multipart upload. If we have not found any such, we throw
+        // error no such multipart upload.
+        String uploadID = args.getMultipartUploadID();
+        Preconditions.checkNotNull(uploadID);
+        String multipartKey = metadataManager.getMultipartKey(volumeName,
+            bucketName, keyName, uploadID);
+        OmKeyInfo partKeyInfo = metadataManager.getOpenKeyTable().get(
+            multipartKey);
+        if (partKeyInfo == null) {
+          throw new OMException("No such Multipart upload is with specified " +
+              "uploadId " + uploadID, ResultCodes.NO_SUCH_MULTIPART_UPLOAD);
+        } else {
+          factor = partKeyInfo.getFactor();
+          type = partKeyInfo.getType();
+        }
+      } else {
+        // If user does not specify a replication strategy or
+        // replication factor, OM will use defaults.
+        if (factor == null) {
+          factor = useRatis ? ReplicationFactor.THREE : ReplicationFactor.ONE;
+        }
+        if (type == null) {
+          type = useRatis ? ReplicationType.RATIS : ReplicationType.STAND_ALONE;
+        }
+      }
       long requestedSize = Math.min(preallocateMax, args.getDataSize());
       List<OmKeyLocationInfo> locations = new ArrayList<>();
-      byte[] objectKey = metadataManager.getOzoneKeyBytes(
+      String objectKey = metadataManager.getOzoneKey(
           volumeName, bucketName, keyName);
       // requested size is not required but more like a optimization:
       // SCM looks at the requested, if it 0, no block will be allocated at
@@ -250,35 +273,30 @@ public class KeyManagerImpl implements KeyManager {
       // value, then this value is used, otherwise, we allocate a single block
       // which is the current size, if read by the client.
       long size = args.getDataSize() >= 0 ? args.getDataSize() : scmBlockSize;
-      byte[] value = metadataManager.getKeyTable().get(objectKey);
       OmKeyInfo keyInfo;
       long openVersion;
-      if (value != null) {
-        // the key already exist, the new blocks will be added as new version
-        keyInfo = OmKeyInfo.getFromProtobuf(KeyInfo.parseFrom(value));
-        // when locations.size = 0, the new version will have identical blocks
-        // as its previous version
-        openVersion = keyInfo.addNewVersion(locations);
-        keyInfo.setDataSize(size + keyInfo.getDataSize());
-      } else {
-        // the key does not exist, create a new object, the new blocks are the
-        // version 0
 
-        keyInfo = new OmKeyInfo.Builder()
-            .setVolumeName(args.getVolumeName())
-            .setBucketName(args.getBucketName())
-            .setKeyName(args.getKeyName())
-            .setOmKeyLocationInfos(Collections.singletonList(
-                new OmKeyLocationInfoGroup(0, locations)))
-            .setCreationTime(Time.now())
-            .setModificationTime(Time.now())
-            .setDataSize(size)
-            .setReplicationType(type)
-            .setReplicationFactor(factor)
-            .build();
+      if (args.getIsMultipartKey()) {
+        // For this upload part we don't need to check in KeyTable. As this
+        // is not an actual key, it is a part of the key.
+        keyInfo = createKeyInfo(args, locations, factor, type, size);
         openVersion = 0;
+      } else {
+        keyInfo = metadataManager.getKeyTable().get(objectKey);
+        if (keyInfo != null) {
+          // the key already exist, the new blocks will be added as new version
+          // when locations.size = 0, the new version will have identical blocks
+          // as its previous version
+          openVersion = keyInfo.addNewVersion(locations);
+          keyInfo.setDataSize(size + keyInfo.getDataSize());
+        } else {
+          // the key does not exist, create a new object, the new blocks are the
+          // version 0
+          keyInfo = createKeyInfo(args, locations, factor, type, size);
+          openVersion = 0;
+        }
       }
-      byte[] openKey = metadataManager.getOpenKeyBytes(
+      String openKey = metadataManager.getOpenKey(
           volumeName, bucketName, keyName, currentTime);
       if (metadataManager.getOpenKeyTable().get(openKey) != null) {
         // This should not happen. If this condition is satisfied, it means
@@ -293,8 +311,7 @@ public class KeyManagerImpl implements KeyManager {
         throw new OMException("Cannot allocate key. Not able to get a valid" +
             "open key id.", OMException.ResultCodes.FAILED_KEY_ALLOCATION);
       }
-      metadataManager.getOpenKeyTable().put(openKey,
-          keyInfo.getProtobuf().toByteArray());
+      metadataManager.getOpenKeyTable().put(openKey, keyInfo);
       LOG.debug("Key {} allocated in volume {} bucket {}",
           keyName, volumeName, bucketName);
       return new OpenKeySession(currentTime, keyInfo, openVersion);
@@ -310,6 +327,33 @@ public class KeyManagerImpl implements KeyManager {
     }
   }
 
+  /**
+   * Create OmKeyInfo object.
+   * @param keyArgs
+   * @param locations
+   * @param factor
+   * @param type
+   * @param size
+   * @return
+   */
+  private OmKeyInfo createKeyInfo(OmKeyArgs keyArgs,
+                                  List<OmKeyLocationInfo> locations,
+                                  ReplicationFactor factor,
+                                  ReplicationType type, long size) {
+    return new OmKeyInfo.Builder()
+        .setVolumeName(keyArgs.getVolumeName())
+        .setBucketName(keyArgs.getBucketName())
+        .setKeyName(keyArgs.getKeyName())
+        .setOmKeyLocationInfos(Collections.singletonList(
+            new OmKeyLocationInfoGroup(0, locations)))
+        .setCreationTime(Time.now())
+        .setModificationTime(Time.now())
+        .setDataSize(size)
+        .setReplicationType(type)
+        .setReplicationFactor(factor)
+        .build();
+  }
+
   @Override
   public void commitKey(OmKeyArgs args, long clientID) throws IOException {
     Preconditions.checkNotNull(args);
@@ -319,17 +363,15 @@ public class KeyManagerImpl implements KeyManager {
     metadataManager.getLock().acquireBucketLock(volumeName, bucketName);
     try {
       validateBucket(volumeName, bucketName);
-      byte[] openKey = metadataManager.getOpenKeyBytes(volumeName, bucketName,
+      String openKey = metadataManager.getOpenKey(volumeName, bucketName,
           keyName, clientID);
-      byte[] objectKey = metadataManager.getOzoneKeyBytes(
+      String objectKey = metadataManager.getOzoneKey(
           volumeName, bucketName, keyName);
-      byte[] openKeyData = metadataManager.getOpenKeyTable().get(openKey);
-      if (openKeyData == null) {
+      OmKeyInfo keyInfo = metadataManager.getOpenKeyTable().get(openKey);
+      if (keyInfo == null) {
         throw new OMException("Commit a key without corresponding entry " +
-            DFSUtil.bytes2String(objectKey), ResultCodes.FAILED_KEY_NOT_FOUND);
+            objectKey, ResultCodes.FAILED_KEY_NOT_FOUND);
       }
-      OmKeyInfo keyInfo =
-          OmKeyInfo.getFromProtobuf(KeyInfo.parseFrom(openKeyData));
       keyInfo.setDataSize(args.getDataSize());
       keyInfo.setModificationTime(Time.now());
       List<OmKeyLocationInfo> locationInfoList = args.getLocationInfoList();
@@ -337,8 +379,10 @@ public class KeyManagerImpl implements KeyManager {
 
       //update the block length for each block
       keyInfo.updateLocationInfoList(locationInfoList);
-      metadataManager.getStore().move(openKey, objectKey,
-          keyInfo.getProtobuf().toByteArray(),
+      metadataManager.getStore().move(
+          openKey,
+          objectKey,
+          keyInfo,
           metadataManager.getOpenKeyTable(),
           metadataManager.getKeyTable());
     } catch (OMException e) {
@@ -361,16 +405,16 @@ public class KeyManagerImpl implements KeyManager {
     String keyName = args.getKeyName();
     metadataManager.getLock().acquireBucketLock(volumeName, bucketName);
     try {
-      byte[] keyBytes = metadataManager.getOzoneKeyBytes(
+      String keyBytes = metadataManager.getOzoneKey(
           volumeName, bucketName, keyName);
-      byte[] value = metadataManager.getKeyTable().get(keyBytes);
+      OmKeyInfo value = metadataManager.getKeyTable().get(keyBytes);
       if (value == null) {
         LOG.debug("volume:{} bucket:{} Key:{} not found",
             volumeName, bucketName, keyName);
         throw new OMException("Key not found",
             OMException.ResultCodes.FAILED_KEY_NOT_FOUND);
       }
-      return OmKeyInfo.getFromProtobuf(KeyInfo.parseFrom(value));
+      return value;
     } catch (IOException ex) {
       LOG.debug("Get key failed for volume:{} bucket:{} key:{}",
           volumeName, bucketName, keyName, ex);
@@ -398,9 +442,9 @@ public class KeyManagerImpl implements KeyManager {
     metadataManager.getLock().acquireBucketLock(volumeName, bucketName);
     try {
       // fromKeyName should exist
-      byte[] fromKey = metadataManager.getOzoneKeyBytes(
+      String fromKey = metadataManager.getOzoneKey(
           volumeName, bucketName, fromKeyName);
-      byte[] fromKeyValue = metadataManager.getKeyTable().get(fromKey);
+      OmKeyInfo fromKeyValue = metadataManager.getKeyTable().get(fromKey);
       if (fromKeyValue == null) {
         // TODO: Add support for renaming open key
         LOG.error(
@@ -418,9 +462,9 @@ public class KeyManagerImpl implements KeyManager {
       }
 
       // toKeyName should not exist
-      byte[] toKey =
-          metadataManager.getOzoneKeyBytes(volumeName, bucketName, toKeyName);
-      byte[] toKeyValue = metadataManager.getKeyTable().get(toKey);
+      String toKey =
+          metadataManager.getOzoneKey(volumeName, bucketName, toKeyName);
+      OmKeyInfo toKeyValue = metadataManager.getKeyTable().get(toKey);
       if (toKeyValue != null) {
         LOG.error(
             "Rename key failed for volume:{} bucket:{} fromKey:{} toKey:{}. "
@@ -430,16 +474,13 @@ public class KeyManagerImpl implements KeyManager {
             OMException.ResultCodes.FAILED_KEY_ALREADY_EXISTS);
       }
 
-
-      OmKeyInfo newKeyInfo =
-          OmKeyInfo.getFromProtobuf(KeyInfo.parseFrom(fromKeyValue));
-      newKeyInfo.setKeyName(toKeyName);
-      newKeyInfo.updateModifcationTime();
+      fromKeyValue.setKeyName(toKeyName);
+      fromKeyValue.updateModifcationTime();
       DBStore store = metadataManager.getStore();
       try (BatchOperation batch = store.initBatchOperation()) {
         metadataManager.getKeyTable().deleteWithBatch(batch, fromKey);
         metadataManager.getKeyTable().putWithBatch(batch, toKey,
-            newKeyInfo.getProtobuf().toByteArray());
+            fromKeyValue);
         store.commitBatchOperation(batch);
       }
     } catch (IOException ex) {
@@ -460,16 +501,15 @@ public class KeyManagerImpl implements KeyManager {
     String keyName = args.getKeyName();
     metadataManager.getLock().acquireBucketLock(volumeName, bucketName);
     try {
-      byte[] objectKey = metadataManager.getOzoneKeyBytes(
+      String objectKey = metadataManager.getOzoneKey(
           volumeName, bucketName, keyName);
-      byte[] objectValue = metadataManager.getKeyTable().get(objectKey);
-      if (objectValue == null) {
+      OmKeyInfo keyInfo = metadataManager.getKeyTable().get(objectKey);
+      if (keyInfo == null) {
         throw new OMException("Key not found",
             OMException.ResultCodes.FAILED_KEY_NOT_FOUND);
       } else {
         // directly delete key with no blocks from db. This key need not be
         // moved to deleted table.
-        KeyInfo keyInfo = KeyInfo.parseFrom(objectValue);
         if (isKeyEmpty(keyInfo)) {
           metadataManager.getKeyTable().delete(objectKey);
           LOG.debug("Key {} deleted from OM DB", keyName);
@@ -491,9 +531,10 @@ public class KeyManagerImpl implements KeyManager {
     }
   }
 
-  private boolean isKeyEmpty(KeyInfo keyInfo) {
-    for (KeyLocationList keyLocationList : keyInfo.getKeyLocationListList()) {
-      if (keyLocationList.getKeyLocationsCount() != 0) {
+  private boolean isKeyEmpty(OmKeyInfo keyInfo) {
+    for (OmKeyLocationInfoGroup keyLocationList : keyInfo
+        .getKeyLocationVersions()) {
+      if (keyLocationList.getLocationList().size() != 0) {
         return false;
       }
     }
@@ -542,4 +583,150 @@ public class KeyManagerImpl implements KeyManager {
   public BackgroundService getDeletingService() {
     return keyDeletingService;
   }
+
+  @Override
+  public OmMultipartInfo initiateMultipartUpload(OmKeyArgs omKeyArgs) throws
+      IOException {
+    Preconditions.checkNotNull(omKeyArgs);
+    String volumeName = omKeyArgs.getVolumeName();
+    String bucketName = omKeyArgs.getBucketName();
+    String keyName = omKeyArgs.getKeyName();
+
+    metadataManager.getLock().acquireBucketLock(volumeName, bucketName);
+    try {
+      long time = Time.monotonicNowNanos();
+      String uploadID = UUID.randomUUID().toString() + "-" + Long.toString(
+          time);
+
+      // We are adding uploadId to key, because if multiple users try to
+      // perform multipart upload on the same key, each will try to upload, who
+      // ever finally commit the key, we see that key in ozone. Suppose if we
+      // don't add id, and use the same key /volume/bucket/key, when multiple
+      // users try to upload the key, we update the parts of the key's from
+      // multiple users to same key, and the key output can be a mix of the
+      // parts from multiple users.
+
+      // So on same key if multiple time multipart upload is initiated we
+      // store multiple entries in the openKey Table.
+      // Checked AWS S3, when we try to run multipart upload, each time a
+      // new uploadId is returned.
+
+      String multipartKey = metadataManager.getMultipartKey(volumeName,
+          bucketName, keyName, uploadID);
+
+      // Not checking if there is an already key for this in the keyTable, as
+      // during final complete multipart upload we take care of this.
+
+
+      Map<Integer, PartKeyInfo> partKeyInfoMap = new HashMap<>();
+      OmMultipartKeyInfo multipartKeyInfo = new OmMultipartKeyInfo(uploadID,
+          partKeyInfoMap);
+      List<OmKeyLocationInfo> locations = new ArrayList<>();
+      OmKeyInfo omKeyInfo = new OmKeyInfo.Builder()
+          .setVolumeName(omKeyArgs.getVolumeName())
+          .setBucketName(omKeyArgs.getBucketName())
+          .setKeyName(omKeyArgs.getKeyName())
+          .setCreationTime(Time.now())
+          .setModificationTime(Time.now())
+          .setReplicationType(omKeyArgs.getType())
+          .setReplicationFactor(omKeyArgs.getFactor())
+          .setOmKeyLocationInfos(Collections.singletonList(
+              new OmKeyLocationInfoGroup(0, locations)))
+          .build();
+      DBStore store = metadataManager.getStore();
+      try (BatchOperation batch = store.initBatchOperation()) {
+        // Create an entry in open key table and multipart info table for
+        // this key.
+        metadataManager.getMultipartInfoTable().putWithBatch(batch,
+            multipartKey, multipartKeyInfo);
+        metadataManager.getOpenKeyTable().putWithBatch(batch,
+            multipartKey, omKeyInfo);
+        store.commitBatchOperation(batch);
+        return new OmMultipartInfo(volumeName, bucketName, keyName, uploadID);
+      }
+    } catch (IOException ex) {
+      LOG.error("Initiate Multipart upload Failed for volume:{} bucket:{} " +
+              "key:{}", volumeName, bucketName, keyName, ex);
+      throw new OMException(ex.getMessage(),
+          OMException.ResultCodes.INITIATE_MULTIPART_UPLOAD_FAILED);
+    } finally {
+      metadataManager.getLock().releaseBucketLock(volumeName, bucketName);
+    }
+  }
+
+  @Override
+  public OmMultipartCommitUploadPartInfo commitMultipartUploadPart(
+      OmKeyArgs omKeyArgs, long clientID) throws IOException {
+    Preconditions.checkNotNull(omKeyArgs);
+    String volumeName = omKeyArgs.getVolumeName();
+    String bucketName = omKeyArgs.getBucketName();
+    String keyName = omKeyArgs.getKeyName();
+    String uploadID = omKeyArgs.getMultipartUploadID();
+    int partNumber = omKeyArgs.getMultipartUploadPartNumber();
+
+    metadataManager.getLock().acquireBucketLock(volumeName, bucketName);
+    String partName;
+    try {
+      String multipartKey = metadataManager.getMultipartKey(volumeName,
+          bucketName, keyName, uploadID);
+      OmMultipartKeyInfo multipartKeyInfo = metadataManager
+          .getMultipartInfoTable().get(multipartKey);
+
+      String openKey = metadataManager.getOpenKey(
+          volumeName, bucketName, keyName, clientID);
+      OmKeyInfo keyInfo = metadataManager.getOpenKeyTable().get(
+          openKey);
+
+      partName = keyName + clientID;
+      if (multipartKeyInfo == null) {
+        throw new OMException("No such Multipart upload is with specified " +
+            "uploadId " + uploadID, ResultCodes.NO_SUCH_MULTIPART_UPLOAD);
+      } else {
+        PartKeyInfo oldPartKeyInfo =
+            multipartKeyInfo.getPartKeyInfo(partNumber);
+        PartKeyInfo.Builder partKeyInfo = PartKeyInfo.newBuilder();
+        partKeyInfo.setPartName(partName);
+        partKeyInfo.setPartNumber(partNumber);
+        partKeyInfo.setPartKeyInfo(keyInfo.getProtobuf());
+        multipartKeyInfo.addPartKeyInfo(partNumber, partKeyInfo.build());
+        if (oldPartKeyInfo == null) {
+          // This is the first time part is being added.
+          DBStore store = metadataManager.getStore();
+          try (BatchOperation batch = store.initBatchOperation()) {
+            metadataManager.getOpenKeyTable().deleteWithBatch(batch, openKey);
+            metadataManager.getMultipartInfoTable().putWithBatch(batch,
+                multipartKey, multipartKeyInfo);
+            store.commitBatchOperation(batch);
+          }
+        } else {
+          // If we have this part already, that means we are overriding it.
+          // We need to 3 steps.
+          // Add the old entry to delete table.
+          // Remove the new entry from openKey table.
+          // Add the new entry in to the list of part keys.
+          DBStore store = metadataManager.getStore();
+          try (BatchOperation batch = store.initBatchOperation()) {
+            metadataManager.getDeletedTable().putWithBatch(batch,
+                oldPartKeyInfo.getPartName(),
+                OmKeyInfo.getFromProtobuf(oldPartKeyInfo.getPartKeyInfo()));
+            metadataManager.getOpenKeyTable().deleteWithBatch(batch, openKey);
+            metadataManager.getMultipartInfoTable().putWithBatch(batch,
+                multipartKey, multipartKeyInfo);
+            store.commitBatchOperation(batch);
+          }
+        }
+      }
+    } catch (IOException ex) {
+      LOG.error("Upload part Failed: volume:{} bucket:{} " +
+          "key:{} PartNumber: {}", volumeName, bucketName, keyName,
+          partNumber, ex);
+      throw new OMException(ex.getMessage(), ResultCodes.UPLOAD_PART_FAILED);
+    } finally {
+      metadataManager.getLock().releaseBucketLock(volumeName, bucketName);
+    }
+
+    return new OmMultipartCommitUploadPartInfo(partName);
+
+  }
+
 }

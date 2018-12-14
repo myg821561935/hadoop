@@ -37,6 +37,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -56,6 +57,9 @@ public final class ErasureCodingPolicyManager {
       ErasureCodingPolicyManager.class);
   private int maxCellSize =
       DFSConfigKeys.DFS_NAMENODE_EC_POLICIES_MAX_CELLSIZE_DEFAULT;
+
+  private boolean userDefinedAllowed =
+      DFSConfigKeys.DFS_NAMENODE_EC_POLICIES_USERPOLICIES_ALLOWED_KEY_DEFAULT;
 
   // Supported storage policies for striped EC files
   private static final byte[] SUITABLE_STORAGE_POLICIES_FOR_EC_STRIPED_MODE =
@@ -142,6 +146,11 @@ public final class ErasureCodingPolicyManager {
     maxCellSize = conf.getInt(
         DFSConfigKeys.DFS_NAMENODE_EC_POLICIES_MAX_CELLSIZE_KEY,
         DFSConfigKeys.DFS_NAMENODE_EC_POLICIES_MAX_CELLSIZE_DEFAULT);
+
+    userDefinedAllowed = conf.getBoolean(
+        DFSConfigKeys.DFS_NAMENODE_EC_POLICIES_USERPOLICIES_ALLOWED_KEY,
+        DFSConfigKeys.
+            DFS_NAMENODE_EC_POLICIES_USERPOLICIES_ALLOWED_KEY_DEFAULT);
   }
 
   /**
@@ -204,6 +213,14 @@ public final class ErasureCodingPolicyManager {
         .toArray(new ErasureCodingPolicyInfo[0]);
   }
 
+  public ErasureCodingPolicyInfo[] getCopyOfPolicies() {
+    ErasureCodingPolicyInfo[] copy;
+    synchronized (this) {
+      copy = Arrays.copyOf(allPolicies, allPolicies.length);
+    }
+    return copy;
+  }
+
   /**
    * Get a {@link ErasureCodingPolicy} by policy ID, including system policy
    * and user defined policy.
@@ -261,6 +278,11 @@ public final class ErasureCodingPolicyManager {
    */
   public synchronized ErasureCodingPolicy addPolicy(
       ErasureCodingPolicy policy) {
+    if (!userDefinedAllowed) {
+      throw new HadoopIllegalArgumentException(
+          "Addition of user defined erasure coding policy is disabled.");
+    }
+
     if (!CodecUtil.hasCodec(policy.getCodecName())) {
       throw new HadoopIllegalArgumentException("Codec name "
           + policy.getCodecName() + " is not supported");

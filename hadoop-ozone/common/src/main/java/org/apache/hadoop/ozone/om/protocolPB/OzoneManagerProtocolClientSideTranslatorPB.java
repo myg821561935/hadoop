@@ -30,6 +30,8 @@ import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyArgs;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartCommitUploadPartInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
@@ -70,6 +72,14 @@ import org.apache.hadoop.ozone.protocol.proto
     .OzoneManagerProtocolProtos.LocateKeyRequest;
 import org.apache.hadoop.ozone.protocol.proto
     .OzoneManagerProtocolProtos.LocateKeyResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartCommitUploadPartRequest;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartCommitUploadPartResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartInfoInitiateRequest;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartInfoInitiateResponse;
 import org.apache.hadoop.ozone.protocol.proto
     .OzoneManagerProtocolProtos.RenameKeyRequest;
 import org.apache.hadoop.ozone.protocol.proto
@@ -551,12 +561,27 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
     KeyArgs.Builder keyArgs = KeyArgs.newBuilder()
         .setVolumeName(args.getVolumeName())
         .setBucketName(args.getBucketName())
-        .setFactor(args.getFactor())
-        .setType(args.getType())
         .setKeyName(args.getKeyName());
+
+    if (args.getFactor() != null) {
+      keyArgs.setFactor(args.getFactor());
+    }
+
+    if (args.getType() != null) {
+      keyArgs.setType(args.getType());
+    }
+
     if (args.getDataSize() > 0) {
       keyArgs.setDataSize(args.getDataSize());
     }
+
+    if (args.getMultipartUploadID() != null) {
+      keyArgs.setMultipartUploadID(args.getMultipartUploadID());
+    }
+
+    keyArgs.setIsMultipartKey(args.getIsMultipartKey());
+
+
     req.setKeyArgs(keyArgs.build());
 
     final LocateKeyResponse resp;
@@ -883,5 +908,71 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
   @Override
   public Object getUnderlyingProxyObject() {
     return null;
+  }
+
+  @Override
+  public OmMultipartInfo initiateMultipartUpload(OmKeyArgs omKeyArgs) throws
+      IOException {
+
+    MultipartInfoInitiateRequest.Builder multipartInfoInitiateRequest =
+        MultipartInfoInitiateRequest.newBuilder();
+
+    KeyArgs.Builder keyArgs = KeyArgs.newBuilder()
+        .setVolumeName(omKeyArgs.getVolumeName())
+        .setBucketName(omKeyArgs.getBucketName())
+        .setKeyName(omKeyArgs.getKeyName())
+        .setFactor(omKeyArgs.getFactor())
+        .setType(omKeyArgs.getType());
+    multipartInfoInitiateRequest.setKeyArgs(keyArgs.build());
+
+    MultipartInfoInitiateResponse resp;
+    try {
+      resp = rpcProxy.initiateMultiPartUpload(NULL_RPC_CONTROLLER,
+          multipartInfoInitiateRequest.build());
+    } catch (ServiceException e) {
+      throw ProtobufHelper.getRemoteException(e);
+    }
+    if (resp.getStatus() != Status.OK) {
+      throw new IOException("Initiate Multipart upload failed, error:" + resp
+          .getStatus());
+    }
+    return new OmMultipartInfo(resp.getVolumeName(), resp.getBucketName(), resp
+        .getKeyName(), resp.getMultipartUploadID());
+  }
+
+  @Override
+  public OmMultipartCommitUploadPartInfo commitMultipartUploadPart(
+      OmKeyArgs omKeyArgs, long clientID) throws IOException {
+    MultipartCommitUploadPartRequest.Builder multipartCommitUploadPartRequest
+        = MultipartCommitUploadPartRequest.newBuilder();
+
+    KeyArgs.Builder keyArgs = KeyArgs.newBuilder()
+        .setVolumeName(omKeyArgs.getVolumeName())
+        .setBucketName(omKeyArgs.getBucketName())
+        .setKeyName(omKeyArgs.getKeyName())
+        .setMultipartUploadID(omKeyArgs.getMultipartUploadID())
+        .setIsMultipartKey(omKeyArgs.getIsMultipartKey())
+        .setMultipartNumber(omKeyArgs.getMultipartUploadPartNumber());
+    multipartCommitUploadPartRequest.setClientID(clientID);
+    multipartCommitUploadPartRequest.setKeyArgs(keyArgs.build());
+
+    MultipartCommitUploadPartResponse response;
+
+    try {
+      response = rpcProxy.commitMultipartUploadPart(NULL_RPC_CONTROLLER,
+          multipartCommitUploadPartRequest.build());
+
+    } catch (ServiceException ex) {
+      throw ProtobufHelper.getRemoteException(ex);
+    }
+
+    if (response.getStatus() != Status.OK) {
+      throw new IOException("Commit multipart upload part key failed, error:"
+          + response.getStatus());
+    }
+
+    OmMultipartCommitUploadPartInfo info = new
+        OmMultipartCommitUploadPartInfo(response.getPartName());
+    return info;
   }
 }

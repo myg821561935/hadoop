@@ -60,6 +60,9 @@ enum Status {
     SCM_VERSION_MISMATCH_ERROR = 21;
     S3_BUCKET_NOT_FOUND = 22;
     S3_BUCKET_ALREADY_EXISTS = 23;
+    INITIATE_MULTIPART_UPLOAD_ERROR = 24;
+    MULTIPART_UPLOAD_PARTFILE_ERROR = 25;
+    NO_SUCH_MULTIPART_UPLOAD_ERROR = 26;
 }
 
 
@@ -243,6 +246,9 @@ message KeyArgs {
     optional hadoop.hdds.ReplicationType type = 5;
     optional hadoop.hdds.ReplicationFactor factor = 6;
     repeated KeyLocation keyLocations = 7;
+    optional bool isMultipartKey = 8;
+    optional string multipartUploadID = 9;
+    optional uint32 multipartNumber = 10;
 }
 
 message KeyLocation {
@@ -406,6 +412,42 @@ message S3ListBucketsResponse {
 }
 
 
+message MultipartInfoInitiateRequest {
+    required KeyArgs keyArgs = 1;
+}
+
+message MultipartInfoInitiateResponse {
+    required string volumeName = 1;
+    required string bucketName = 2;
+    required string keyName = 3;
+    required string multipartUploadID = 4;
+    required Status status = 5;
+}
+
+message MultipartKeyInfo {
+    required string uploadID = 4;
+    repeated PartKeyInfo partKeyInfoList = 5;
+}
+
+message PartKeyInfo {
+    required string partName = 1;
+    required uint32 partNumber = 2;
+    required KeyInfo partKeyInfo = 3;
+}
+
+message MultipartCommitUploadPartRequest {
+    required KeyArgs keyArgs = 1;
+    required uint64 clientID = 2;
+}
+
+message MultipartCommitUploadPartResponse {
+    // This one is returned as Etag for S3.
+    optional string partName = 1;
+    required Status status = 2;
+}
+
+
+
 /**
  The OM service that takes care of Ozone namespace.
 */
@@ -541,4 +583,10 @@ service OzoneManagerService {
 
     rpc listS3Buckets(S3ListBucketsRequest)
     returns(S3ListBucketsResponse);
+
+    rpc initiateMultiPartUpload(MultipartInfoInitiateRequest)
+    returns (MultipartInfoInitiateResponse);
+
+    rpc commitMultipartUploadPart(MultipartCommitUploadPartRequest)
+    returns (MultipartCommitUploadPartResponse);
 }

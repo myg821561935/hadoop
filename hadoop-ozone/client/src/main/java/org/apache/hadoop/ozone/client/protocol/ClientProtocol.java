@@ -26,6 +26,7 @@ import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.ozone.client.io.OzoneInputStream;
 import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 
 import java.io.IOException;
 import java.util.List;
@@ -384,5 +385,26 @@ public interface ClientProtocol {
    * Close and release the resources.
    */
   void close() throws IOException;
+
+
+  /**
+   * Initiate Multipart upload.
+   * @param volumeName
+   * @param bucketName
+   * @param keyName
+   * @param type
+   * @param factor
+   * @return {@link OmMultipartInfo}
+   * @throws IOException
+   */
+  OmMultipartInfo initiateMultipartUpload(String volumeName, String
+      bucketName, String keyName, ReplicationType type, ReplicationFactor
+      factor) throws IOException;
+
+  OzoneOutputStream createMultipartKey(String volumeName, String bucketName,
+                                       String keyName, long size,
+                                       int partNumber, String uploadID)
+      throws IOException;
+
 
 }

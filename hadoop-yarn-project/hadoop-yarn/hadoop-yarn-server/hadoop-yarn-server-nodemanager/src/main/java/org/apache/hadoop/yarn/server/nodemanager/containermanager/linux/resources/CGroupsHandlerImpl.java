@@ -64,7 +64,7 @@ class CGroupsHandlerImpl implements CGroupsHandler {
   private static final String MTAB_FILE = "/proc/mounts";
   private static final String CGROUPS_FSTYPE = "cgroup";
 
-  private String mtabFile;
+  private final String mtabFile;
   private final String cGroupPrefix;
   private final boolean enableCGroupMount;
   private final String cGroupMountPath;
@@ -87,9 +87,10 @@ class CGroupsHandlerImpl implements CGroupsHandler {
   CGroupsHandlerImpl(Configuration conf, PrivilegedOperationExecutor
       privilegedOperationExecutor, String mtab)
       throws ResourceHandlerException {
+    // Remove leading and trialing slash(es)
     this.cGroupPrefix = conf.get(YarnConfiguration.
         NM_LINUX_CONTAINER_CGROUPS_HIERARCHY, "/hadoop-yarn")
-        .replaceAll("^/", "").replaceAll("$/", "");
+        .replaceAll("^/+", "").replaceAll("/+$", "");
     this.enableCGroupMount = conf.getBoolean(YarnConfiguration.
         NM_LINUX_CONTAINER_CGROUPS_MOUNT, false);
     this.cGroupMountPath = conf.get(YarnConfiguration.
@@ -620,5 +621,17 @@ class CGroupsHandlerImpl implements CGroupsHandler {
   @Override
   public String getCGroupMountPath() {
     return cGroupMountPath;
+  }
+
+  @Override
+  public String toString() {
+    return CGroupsHandlerImpl.class.getName() + "{" +
+        "mtabFile='" + mtabFile + '\'' +
+        ", cGroupPrefix='" + cGroupPrefix + '\'' +
+        ", enableCGroupMount=" + enableCGroupMount +
+        ", cGroupMountPath='" + cGroupMountPath + '\'' +
+        ", deleteCGroupTimeout=" + deleteCGroupTimeout +
+        ", deleteCGroupDelay=" + deleteCGroupDelay +
+        '}';
   }
 }

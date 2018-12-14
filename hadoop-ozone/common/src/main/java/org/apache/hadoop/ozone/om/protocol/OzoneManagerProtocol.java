@@ -16,7 +16,8 @@
  * limitations under the License.
  */
 package org.apache.hadoop.ozone.om.protocol;
-
+import org.apache.hadoop.ozone.om.helpers.OmMultipartCommitUploadPartInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmBucketArgs;
 import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyArgs;
@@ -303,6 +304,20 @@ public interface OzoneManagerProtocol {
   List<OmBucketInfo> listS3Buckets(String userName, String startBucketName,
                                    String bucketPrefix, int maxNumOfBuckets)
       throws IOException;
+
+
+  /**
+   * Initiate multipart upload for the specified key.
+   * @param keyArgs
+   * @return MultipartInfo
+   * @throws IOException
+   */
+  OmMultipartInfo initiateMultipartUpload(OmKeyArgs keyArgs) throws IOException;
+
+
+
+  OmMultipartCommitUploadPartInfo commitMultipartUploadPart(
+      OmKeyArgs omKeyArgs, long clientID) throws IOException;
 
 }
 
