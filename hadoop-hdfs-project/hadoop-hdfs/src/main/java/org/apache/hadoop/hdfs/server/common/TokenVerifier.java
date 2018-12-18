@@ -15,16 +15,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.hadoop.hdfs.server.common;
 
+import java.io.IOException;
+import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier;
 
-export function initialize( application ) {
-   application.inject('controller', 'env', 'service:env');
-   application.inject('route', 'env', 'service:env');
-   application.inject('adapter', 'env', 'service:env');
-   application.inject('model', 'env', 'service:env');
+/**
+ * Interface to verify delegation tokens passed through WebHDFS.
+ * Implementations are intercepted by JspHelper that pass delegation token
+ * for verification.
+ */
+public interface TokenVerifier<T extends AbstractDelegationTokenIdentifier> {
+
+  /* Verify delegation token passed through WebHDFS
+   * Name node, Router implement this for JspHelper to verify token
+   */
+  void verifyToken(T t, byte[] password) throws IOException;
+
 }
-
-export default {
-  name: 'env',
-  initialize
-};
