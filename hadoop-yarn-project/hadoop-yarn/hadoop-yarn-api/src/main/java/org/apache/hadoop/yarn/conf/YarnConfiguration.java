@@ -2222,7 +2222,15 @@ public class YarnConfiguration extends Configuration {
   
   public static final String NM_AUX_SERVICES = 
       NM_PREFIX + "aux-services";
-  
+
+  public static final String NM_AUX_SERVICES_MANIFEST =
+      NM_AUX_SERVICES + ".manifest";
+
+  public static final String NM_AUX_SERVICES_MANIFEST_RELOAD_MS =
+      NM_AUX_SERVICES + ".manifest.reload-ms";
+
+  public static final long DEFAULT_NM_AUX_SERVICES_MANIFEST_RELOAD_MS = 120000;
+
   public static final String NM_AUX_SERVICE_FMT =
       NM_PREFIX + "aux-services.%s.class";
 
@@ -2294,13 +2302,17 @@ public class YarnConfiguration extends Configuration {
   
   /** Keytab for Proxy.*/
   public static final String PROXY_KEYTAB = PROXY_PREFIX + "keytab";
-  
+
   /** The address for the web proxy.*/
   public static final String PROXY_ADDRESS =
     PROXY_PREFIX + "address";
   public static final int DEFAULT_PROXY_PORT = 9099;
   public static final String DEFAULT_PROXY_ADDRESS =
     "0.0.0.0:" + DEFAULT_PROXY_PORT;
+
+  /** Binding address for the web proxy. */
+  public static final String PROXY_BIND_HOST =
+      PROXY_PREFIX + "bind-host";
   
   /**
    * YARN Service Level Authorization
@@ -3655,6 +3667,12 @@ public class YarnConfiguration extends Configuration {
       NM_NODE_LABELS_PREFIX + "resync-interval-ms";
 
   public static final long DEFAULT_NM_NODE_LABELS_RESYNC_INTERVAL =
+      2 * 60 * 1000;
+
+  public static final String NM_NODE_ATTRIBUTES_RESYNC_INTERVAL =
+      NM_NODE_ATTRIBUTES_PREFIX + "resync-interval-ms";
+
+  public static final long DEFAULT_NM_NODE_ATTRIBUTES_RESYNC_INTERVAL =
       2 * 60 * 1000;
 
   // If -1 is configured then no timer task should be created
