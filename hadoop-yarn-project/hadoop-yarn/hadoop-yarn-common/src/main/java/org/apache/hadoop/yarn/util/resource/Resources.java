@@ -26,6 +26,9 @@ import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.exceptions.ResourceNotFoundException;
+import org.apache.hadoop.yarn.util.UnitsConversionUtil;
+
+import java.util.Map;
 
 /**
  * Resources is a computation class which provides a set of apis to do
@@ -224,6 +227,22 @@ public class Resources {
 
   public static Resource unbounded() {
     return UNBOUNDED;
+  }
+
+  private static void refreshResourceUNBOUNDEDandNONE() {
+    if(UNBOUNDED instanceof FixedValueResource) {
+      ((FixedValueResource) UNBOUNDED).initResourceMap();
+    }
+    if(NONE instanceof FixedValueResource) {
+      ((FixedValueResource) NONE).initResourceMap();
+    }
+  }
+
+  public static void refreshResourcesFromMap(
+      Map<String, ResourceInformation> resourceInformationMap) {
+    ResourceUtils.initializeResourcesFromResourceInformationMap(
+        resourceInformationMap);
+    refreshResourceUNBOUNDEDandNONE();
   }
 
   public static Resource clone(Resource res) {
@@ -498,7 +517,12 @@ public class Resources {
       try {
         ResourceInformation rhsValue = rhs.getResourceInformation(i);
         ResourceInformation lhsValue = lhs.getResourceInformation(i);
-        ResourceInformation outInfo = lhsValue.getValue() < rhsValue.getValue()
+        long lValue = lhsValue.getValue();
+        long rValue = rhsValue.getUnits().equals(lhsValue.getUnits())
+            ? rhsValue.getValue()
+            : UnitsConversionUtil.convert(rhsValue.getUnits(),
+              lhsValue.getUnits(), rhsValue.getValue());
+        ResourceInformation outInfo = lValue < rValue
             ? lhsValue
             : rhsValue;
         ret.setResourceInformation(i, outInfo);

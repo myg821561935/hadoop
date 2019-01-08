@@ -19,6 +19,7 @@ package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -27,8 +28,18 @@ import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.server.resourcemanager.MockNM;
 import org.apache.hadoop.yarn.server.resourcemanager.MockRM;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+
+import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.FPGA_URI;
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.GPU_URI;
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.MEMORY_URI;
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.VCORES_URI;
+import static org.apache.hadoop.yarn.conf.YarnConfiguration.RESOURCE_TYPES;
+import static org.apache.hadoop.yarn.server.resourcemanager.scheduler
+    .capacity.CapacitySchedulerConfiguration.RESOURCE_CALCULATOR_CLASS;
 
 public class TestAbsoluteResourceConfiguration {
 
@@ -51,6 +62,24 @@ public class TestAbsoluteResourceConfiguration {
   private static final String QUEUEA2_FULL = QUEUEA_FULL + "." + QUEUEA2;
   private static final String QUEUEB1_FULL = QUEUEB_FULL + "." + QUEUEB1;
 
+  private static HashMap<String, Long> queueCMinResources = new HashMap();
+  private static HashMap<String, Long> queueCMaxResources = new HashMap();
+  private static HashMap<String, Long> queueCReducedResources = new HashMap();
+
+  //add GPU and FPGA to resource types
+  static {
+    queueCMinResources.put(GPU_URI, 2L);
+    queueCMinResources.put(FPGA_URI, 2L);
+    queueCMaxResources.put(GPU_URI, 4L);
+    queueCMaxResources.put(FPGA_URI, 4L);
+    queueCReducedResources.put(GPU_URI, 1L);
+    queueCReducedResources.put(FPGA_URI, 1L);
+    CapacitySchedulerConfiguration csConf =
+        new CapacitySchedulerConfiguration();
+    csConf.set(RESOURCE_TYPES, GPU_URI + "," + FPGA_URI);
+    ResourceUtils.resetResourceTypes(csConf);
+  }
+
   private static final Resource QUEUE_A_MINRES = Resource.newInstance(100 * GB,
       10);
   private static final Resource QUEUE_A_MAXRES = Resource.newInstance(200 * GB,
@@ -66,21 +95,27 @@ public class TestAbsoluteResourceConfiguration {
   private static final Resource QUEUE_B_MAXRES = Resource.newInstance(150 * GB,
       30);
   private static final Resource QUEUE_C_MINRES = Resource.newInstance(50 * GB,
-      10);
+      10, queueCMinResources);
   private static final Resource QUEUE_C_MAXRES = Resource.newInstance(150 * GB,
-      20);
+      20, queueCMaxResources);
+  private static final Resource QUEUE_C_MAXRES_WITH_MEMORY_CPUS =
+      Resource.newInstance(150 * GB, 20);
   private static final Resource QUEUEA_REDUCED = Resource.newInstance(64000, 6);
   private static final Resource QUEUEB_REDUCED = Resource.newInstance(32000, 6);
-  private static final Resource QUEUEC_REDUCED = Resource.newInstance(32000, 6);
+  private static final Resource QUEUEC_REDUCED = Resource.newInstance(32000,
+      6, queueCReducedResources);
   private static final Resource QUEUEMAX_REDUCED = Resource.newInstance(128000,
       20);
+  private static final Resource QUEUECMAX_REDUCED = Resource.newInstance(128000,
+      20, queueCReducedResources);
 
   private static Set<String> resourceTypes = new HashSet<>(
-      Arrays.asList("memory", "vcores"));
+      Arrays.asList(MEMORY_URI, VCORES_URI, GPU_URI, FPGA_URI));
 
   private CapacitySchedulerConfiguration setupSimpleQueueConfiguration(
       boolean isCapacityNeeded) {
-    CapacitySchedulerConfiguration csConf = new CapacitySchedulerConfiguration();
+    CapacitySchedulerConfiguration csConf =
+        setupExtendedResourceConfiguration();
     csConf.setQueues(CapacitySchedulerConfiguration.ROOT,
         new String[]{QUEUEA, QUEUEB, QUEUEC});
 
@@ -96,7 +131,8 @@ public class TestAbsoluteResourceConfiguration {
 
   private CapacitySchedulerConfiguration setupComplexQueueConfiguration(
       boolean isCapacityNeeded) {
-    CapacitySchedulerConfiguration csConf = new CapacitySchedulerConfiguration();
+    CapacitySchedulerConfiguration csConf =
+        setupExtendedResourceConfiguration();
     csConf.setQueues(CapacitySchedulerConfiguration.ROOT,
         new String[]{QUEUEA, QUEUEB, QUEUEC});
     csConf.setQueues(QUEUEA_FULL, new String[]{QUEUEA1, QUEUEA2});
@@ -146,6 +182,18 @@ public class TestAbsoluteResourceConfiguration {
     return csConf;
   }
 
+  private CapacitySchedulerConfiguration
+      setupExtendedResourceConfiguration() {
+    CapacitySchedulerConfiguration csConf =
+        new CapacitySchedulerConfiguration();
+    csConf.set(RESOURCE_TYPES, GPU_URI + "," + FPGA_URI);
+    csConf.set(RESOURCE_CALCULATOR_CLASS,
+        "org.apache.hadoop.yarn.util.resource.DominantResourceCalculator");
+    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+        ResourceScheduler.class);
+    return csConf;
+  }
+
   @Test
   public void testSimpleMinMaxResourceConfigurartionPerQueue() {
 
@@ -179,9 +227,6 @@ public class TestAbsoluteResourceConfiguration {
     CapacitySchedulerConfiguration csConf = setupSimpleQueueConfiguration(
         false);
     setupMinMaxResourceConfiguration(csConf);
-
-    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
-        ResourceScheduler.class);
 
     @SuppressWarnings("resource")
     MockRM rm = new MockRM(csConf);
@@ -220,11 +265,13 @@ public class TestAbsoluteResourceConfiguration {
     Assert.assertEquals("Min resource configured for QUEUEC is not correct",
         QUEUE_C_MINRES, qC.queueResourceQuotas.getConfiguredMinResource());
     Assert.assertEquals("Max resource configured for QUEUEC is not correct",
-        QUEUE_C_MAXRES, qC.queueResourceQuotas.getConfiguredMaxResource());
+        QUEUE_C_MAXRES,
+        qC.queueResourceQuotas.getConfiguredMaxResource());
     Assert.assertEquals("Effective Min resource for QUEUEC is not correct",
         QUEUE_C_MINRES, qC.queueResourceQuotas.getEffectiveMinResource());
     Assert.assertEquals("Effective Max resource for QUEUEC is not correct",
-        QUEUE_C_MAXRES, qC.queueResourceQuotas.getEffectiveMaxResource());
+        QUEUE_C_MAXRES_WITH_MEMORY_CPUS,
+        qC.queueResourceQuotas.getEffectiveMaxResource());
 
     rm.stop();
   }
@@ -249,8 +296,6 @@ public class TestAbsoluteResourceConfiguration {
     CapacitySchedulerConfiguration csConf = setupSimpleQueueConfiguration(
         false);
     setupMinMaxResourceConfiguration(csConf);
-    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
-        ResourceScheduler.class);
 
     @SuppressWarnings("resource")
     MockRM rm = new MockRM(csConf);
@@ -313,11 +358,13 @@ public class TestAbsoluteResourceConfiguration {
     Assert.assertEquals("Min resource configured for QUEUEC is not correct",
         QUEUE_C_MINRES, qC.queueResourceQuotas.getConfiguredMinResource());
     Assert.assertEquals("Max resource configured for QUEUEC is not correct",
-        QUEUE_C_MAXRES, qC.queueResourceQuotas.getConfiguredMaxResource());
+        QUEUE_C_MAXRES,
+        qC.queueResourceQuotas.getConfiguredMaxResource());
     Assert.assertEquals("Effective Min resource for QUEUEC is not correct",
         QUEUE_C_MINRES, qC.queueResourceQuotas.getEffectiveMinResource());
     Assert.assertEquals("Effective Max resource for QUEUEC is not correct",
-        QUEUE_C_MAXRES, qC.queueResourceQuotas.getEffectiveMaxResource());
+        QUEUE_C_MAXRES_WITH_MEMORY_CPUS,
+        qC.queueResourceQuotas.getEffectiveMaxResource());
 
     // 3. Create a new config and make sure one queue's min resource is more
     // than its max resource configured.
@@ -382,8 +429,6 @@ public class TestAbsoluteResourceConfiguration {
     CapacitySchedulerConfiguration csConf = setupComplexQueueConfiguration(
         false);
     setupComplexMinMaxResourceConfig(csConf);
-    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
-        ResourceScheduler.class);
 
     @SuppressWarnings("resource")
     MockRM rm = new MockRM(csConf);
@@ -441,16 +486,21 @@ public class TestAbsoluteResourceConfiguration {
         false);
     setupMinMaxResourceConfiguration(csConf);
 
-    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
-        ResourceScheduler.class);
-
     @SuppressWarnings("resource")
     MockRM rm = new MockRM(csConf);
     rm.start();
 
+    HashMap<String, Long> node1Resources = new HashMap();
+    node1Resources.put(GPU_URI, 3L);
+    node1Resources.put(FPGA_URI, 3L);
+    HashMap<String, Long> node2Resources = new HashMap();
+    node2Resources.put(GPU_URI, 1L);
+    node2Resources.put(FPGA_URI, 1L);
+    Resource node1Resource = Resource.newInstance(125 * GB, 20, node1Resources);
+    Resource node2Resource = Resource.newInstance(125 * GB, 20, node2Resources);
     // Add few nodes
-    MockNM nm1 = rm.registerNode("127.0.0.1:1234", 125 * GB, 20);
-    rm.registerNode("127.0.0.2:1234", 125 * GB, 20);
+    MockNM nm1 = rm.registerNode("127.0.0.1:1234", node1Resource);
+    rm.registerNode("127.0.0.2:1234", node2Resource);
 
     // Get queue object to verify min/max resource configuration.
     CapacityScheduler cs = (CapacityScheduler) rm.getResourceScheduler();
@@ -507,7 +557,7 @@ public class TestAbsoluteResourceConfiguration {
     Assert.assertEquals("Effective Min resource for QUEUEC is not correct",
         QUEUEC_REDUCED, qC.queueResourceQuotas.getEffectiveMinResource());
     Assert.assertEquals("Effective Max resource for QUEUEC is not correct",
-        QUEUEMAX_REDUCED, qC.queueResourceQuotas.getEffectiveMaxResource());
+        QUEUECMAX_REDUCED, qC.queueResourceQuotas.getEffectiveMaxResource());
 
     rm.stop();
   }
@@ -520,16 +570,21 @@ public class TestAbsoluteResourceConfiguration {
         false);
     setupComplexMinMaxResourceConfig(csConf);
 
-    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
-        ResourceScheduler.class);
-
     @SuppressWarnings("resource")
     MockRM rm = new MockRM(csConf);
     rm.start();
 
+    HashMap<String, Long> node1Resources = new HashMap();
+    node1Resources.put(GPU_URI, 3L);
+    node1Resources.put(FPGA_URI, 3L);
+    HashMap<String, Long> node2Resources = new HashMap();
+    node2Resources.put(GPU_URI, 1L);
+    node2Resources.put(FPGA_URI, 1L);
+    Resource node1Resource = Resource.newInstance(125 * GB, 20, node1Resources);
+    Resource node2Resource = Resource.newInstance(125 * GB, 20, node2Resources);
     // Add few nodes
-    rm.registerNode("127.0.0.1:1234", 125 * GB, 20);
-    rm.registerNode("127.0.0.2:1234", 125 * GB, 20);
+    rm.registerNode("127.0.0.1:1234", node1Resource);
+    rm.registerNode("127.0.0.2:1234", node2Resource);
 
     // Get queue object to verify min/max resource configuration.
     CapacityScheduler cs = (CapacityScheduler) rm.getResourceScheduler();
@@ -590,7 +645,7 @@ public class TestAbsoluteResourceConfiguration {
         QUEUE_B_MAXRES, qB1.queueResourceQuotas.getEffectiveMaxResource());
 
     // add new NM.
-    rm.registerNode("127.0.0.3:1234", 125 * GB, 20);
+    rm.registerNode("127.0.0.3:1234", Resource.newInstance(node1Resource));
 
     // There will be no change in effective resource when nodes are added.
     // Since configured capacity was based on initial node capacity, a

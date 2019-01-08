@@ -47,7 +47,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairSchedule
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fifo.FifoScheduler;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
 import org.apache.hadoop.yarn.util.resource.DominantResourceCalculator;
-import org.apache.hadoop.yarn.util.resource.ResourceUtils;
+import org.apache.hadoop.yarn.util.resource.Resources;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -479,7 +479,11 @@ public abstract class ApplicationMasterServiceTestBase {
       throws Exception {
     Map<String, ResourceInformation> riMap =
         initializeMandatoryResources();
-    ResourceUtils.initializeResourcesFromResourceInformationMap(riMap);
+
+    //Resources.NONE and Resources.UNBOUNDED should be refreshed with the map,
+    //Otherwise, Fair scheduler will use the wrong Resources.UNBOUNDED
+    //to compute the max resources of queues
+    Resources.refreshResourcesFromMap(riMap);
 
     final YarnConfiguration yarnConf = createYarnConfig();
 
@@ -536,7 +540,10 @@ public abstract class ApplicationMasterServiceTestBase {
         ResourceInformation.VCORES.getUnits(), 0, 4);
     riMap.put(CUSTOM_RES, res1);
 
-    ResourceUtils.initializeResourcesFromResourceInformationMap(riMap);
+    //Resources.NONE and Resources.UNBOUNDED should be refreshed with the map,
+    //Otherwise, Fair scheduler will use the wrong Resources.UNBOUNDED
+    //to compute the max resources of queues
+    Resources.refreshResourcesFromMap(riMap);
 
     final YarnConfiguration yarnConf = createYarnConfig();
     // Don't reset resource types since we have already configured resource

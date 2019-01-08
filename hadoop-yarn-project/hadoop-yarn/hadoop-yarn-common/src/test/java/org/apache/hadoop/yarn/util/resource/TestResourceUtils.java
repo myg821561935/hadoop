@@ -25,6 +25,7 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.api.records.ResourceTypeInfo;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
+import org.apache.hadoop.yarn.exceptions.ResourceNotFoundException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.junit.After;
 import org.junit.Assert;
@@ -404,7 +405,7 @@ public class TestResourceUtils {
             ResourceUtils.getResourcesTypeInfo());
     Assert.assertEquals(Resources.createResource(20 * 1024, 3), res);
 
-    res = ResourceUtils.createResourceFromString("memory=20M,vcores=3",
+    res = ResourceUtils.createResourceFromString("[memory=20M,vcores=3]",
             ResourceUtils.getResourcesTypeInfo());
     Assert.assertEquals(Resources.createResource(20, 3), res);
 
@@ -412,7 +413,7 @@ public class TestResourceUtils {
             ResourceUtils.getResourcesTypeInfo());
     Assert.assertEquals(Resources.createResource(20, 3), res);
 
-    res = ResourceUtils.createResourceFromString("memory-mb=20,vcores=3",
+    res = ResourceUtils.createResourceFromString("[memory-mb=20,vcores=3]",
             ResourceUtils.getResourcesTypeInfo());
     Assert.assertEquals(Resources.createResource(20, 3), res);
 
@@ -420,21 +421,20 @@ public class TestResourceUtils {
             ResourceUtils.getResourcesTypeInfo());
     Assert.assertEquals(Resources.createResource(20, 3), res);
 
-    res = ResourceUtils.createResourceFromString("memory-mb=20G,vcores=3",
+    res = ResourceUtils.createResourceFromString("[memory-mb=20G,vcores=3]",
             ResourceUtils.getResourcesTypeInfo());
     Assert.assertEquals(Resources.createResource(20 * 1024, 3), res);
 
-    // W/o unit for memory means bits, and 20 bits will be rounded to 0
     res = ResourceUtils.createResourceFromString("memory=20,vcores=3",
             ResourceUtils.getResourcesTypeInfo());
-    Assert.assertEquals(Resources.createResource(0, 3), res);
+    Assert.assertEquals(Resources.createResource(20, 3), res);
 
     // Test multiple resources
     List<ResourceTypeInfo> resTypes = new ArrayList<>(
             ResourceUtils.getResourcesTypeInfo());
     resTypes.add(ResourceTypeInfo.newInstance(ResourceInformation.GPU_URI, ""));
     ResourceUtils.reinitializeResources(resTypes);
-    res = ResourceUtils.createResourceFromString("memory=2G,vcores=3,gpu=0",
+    res = ResourceUtils.createResourceFromString("[memory=2G,vcores=3,gpu=0]",
             resTypes);
     Assert.assertEquals(2 * 1024, res.getMemorySize());
     Assert.assertEquals(0, res.getResourceValue(ResourceInformation.GPU_URI));
@@ -450,7 +450,7 @@ public class TestResourceUtils {
     Assert.assertEquals(0, res.getResourceValue(ResourceInformation.GPU_URI));
 
     res = ResourceUtils.createResourceFromString(
-            "memory=2G,vcores=3,yarn.io/gpu=0", resTypes);
+            "[memory=2G,vcores=3,yarn.io/gpu=0]", resTypes);
     Assert.assertEquals(2 * 1024, res.getMemorySize());
     Assert.assertEquals(0, res.getResourceValue(ResourceInformation.GPU_URI));
 
@@ -459,7 +459,39 @@ public class TestResourceUtils {
     Assert.assertEquals(2 * 1024, res.getMemorySize());
     Assert.assertEquals(3, res.getResourceValue(ResourceInformation.GPU_URI));
 
-    // TODO, add more negative tests.
+    //negative tests
+    try {
+      res = ResourceUtils.createResourceFromString("[memory-mb=, vcores=3, " +
+          "gpu=5]", resTypes);
+    } catch(IllegalArgumentException e) {
+      Assert.assertEquals("\"memory-mb=\" is not a valid resource type/amount" +
+              " pair. Please provide key=amount pairs separated by commas.",
+          e.getMessage());
+    }
+
+    try {
+      res = ResourceUtils.createResourceFromString("memory-mb=200G,vcores=3,",
+          resTypes);
+    } catch(IllegalArgumentException e) {
+      Assert.assertEquals("Resource is null or empty. Please provide " +
+          "key=amount pairs", e.getMessage());
+    }
+
+    try {
+      res = ResourceUtils.createResourceFromString("memory-mb=200G, !vcores=3",
+          resTypes);
+    } catch(ResourceNotFoundException e) {
+      Assert.assertEquals("Unknown resource: !vcores", e.getMessage());
+    }
+
+    try {
+      res = ResourceUtils.createResourceFromString("memory-mb=200Gvcores=3",
+          resTypes);
+    } catch(IllegalArgumentException e) {
+      Assert.assertEquals("\"memory-mb=200Gvcores=3\" is not a valid resource" +
+          " type/amount pair. Please provide key=amount pairs separated by " +
+          "commas.", e.getMessage());
+    }
   }
 
   public static String setupResourceTypes(Configuration conf, String filename)

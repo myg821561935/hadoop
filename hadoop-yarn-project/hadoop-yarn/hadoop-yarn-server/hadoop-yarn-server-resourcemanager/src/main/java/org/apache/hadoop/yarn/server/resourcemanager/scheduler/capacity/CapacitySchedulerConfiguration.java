@@ -52,7 +52,6 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.FairOrderi
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.FifoOrderingPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.OrderingPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.SchedulableEntity;
-import org.apache.hadoop.yarn.util.UnitsConversionUtil;
 import org.apache.hadoop.yarn.util.resource.DefaultResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceUtils;
@@ -71,6 +70,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Set;
 import java.util.StringTokenizer;
+
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.MEMORY_URI;
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.VCORES_URI;
 
 public class CapacitySchedulerConfiguration extends ReservationSchedulerConfiguration {
 
@@ -357,13 +359,6 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   public static final String PATTERN_FOR_ABSOLUTE_RESOURCE = "^\\[[\\w\\.,\\-_=\\ /]+\\]$";
 
   private static final Pattern RESOURCE_PATTERN = Pattern.compile(PATTERN_FOR_ABSOLUTE_RESOURCE);
-
-  /**
-   * Different resource types supported.
-   */
-  public enum AbsoluteResourceType {
-    MEMORY, VCORES;
-  }
 
   AppPriorityACLConfigurationParser priorityACLConfig = new AppPriorityACLConfigurationParser();
 
@@ -2044,10 +2039,18 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
 
     StringBuilder resourceString = new StringBuilder();
     resourceString
-        .append("[" + AbsoluteResourceType.MEMORY.toString().toLowerCase() + "="
-            + resource.getMemorySize() + ","
-            + AbsoluteResourceType.VCORES.toString().toLowerCase() + "="
-            + resource.getVirtualCores() + "]");
+        .append("[" + MEMORY_URI + "=" + resource.getMemorySize() + ","
+            + VCORES_URI + "=" + resource.getVirtualCores());
+    ResourceInformation[] resourceInformations = resource.getResources();
+    if(resourceInformations.length > 2) {
+      for (int i = 2; i < resourceInformations.length; i++) {
+        resourceString.append(",");
+        resourceString.append(resourceInformations[i].getName());
+        resourceString.append("=");
+        resourceString.append(resourceInformations[i].getValue());
+      }
+    }
+    resourceString.append("]");
 
     String prefix = getQueuePrefix(queue) + type;
     if (!label.isEmpty()) {
@@ -2083,11 +2086,10 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
 
       subGroup = subGroup.substring(1, subGroup.length() - 1);
       for (String kvPair : subGroup.trim().split(",")) {
-        String[] splits = kvPair.split("=");
-
-        // Ensure that each sub string is key value pair separated by '='.
-        if (splits != null && splits.length > 1) {
-          updateResourceValuesFromConfig(resourceTypes, resource, splits);
+        try {
+          updateResourceValuesFromConfig(resourceTypes, resource, kvPair);
+        } catch (IllegalArgumentException e) {
+          LOG.warn(e.getMessage(), e);
         }
       }
     }
@@ -2105,36 +2107,23 @@ public class CapacitySchedulerConfiguration extends ReservationSchedulerConfigur
   }
 
   private void updateResourceValuesFromConfig(Set<String> resourceTypes,
-      Resource resource, String[] splits) {
+      Resource resource, String resourceValue) {
+
+    ResourceInformation resourceInformation = ResourceUtils
+        .getResourceInformation(resourceValue);
+    String resourceName = resourceInformation.getName();
 
     // If key is not a valid type, skip it.
-    if (!resourceTypes.contains(splits[0])) {
+    if (!resourceTypes.contains(resourceName)) {
       return;
     }
 
-    String units = getUnits(splits[1]);
-    Long resourceValue = Long
-        .valueOf(splits[1].substring(0, splits[1].length() - units.length()));
-
-    // Convert all incoming units to MB if units is configured.
-    if (!units.isEmpty()) {
-      resourceValue = UnitsConversionUtil.convert(units, "Mi", resourceValue);
-    }
-
-    // map it based on key.
-    AbsoluteResourceType resType = AbsoluteResourceType
-        .valueOf(StringUtils.toUpperCase(splits[0].trim()));
-    switch (resType) {
-    case MEMORY :
-      resource.setMemorySize(resourceValue);
-      break;
-    case VCORES :
-      resource.setVirtualCores(resourceValue.intValue());
-      break;
-    default :
-      resource.setResourceInformation(splits[0].trim(), ResourceInformation
-          .newInstance(splits[0].trim(), units, resourceValue));
-      break;
+    if(resourceName.equals(MEMORY_URI)) {
+      resource.setMemorySize(resourceInformation.getValue());
+    } else if(resourceName.equals(VCORES_URI)) {
+      resource.setVirtualCores((int)resourceInformation.getValue());
+    } else {
+      resource.setResourceInformation(resourceName, resourceInformation);
     }
   }
 

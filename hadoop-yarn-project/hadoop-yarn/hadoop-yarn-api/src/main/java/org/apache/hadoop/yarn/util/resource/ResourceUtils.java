@@ -805,8 +805,8 @@ public class ResourceUtils {
   @InterfaceAudience.Private
   @InterfaceStability.Unstable
   public static Resource createResourceFromString(
-          String resourceStr,
-          List<ResourceTypeInfo> resourceTypeInfos) {
+      String resourceStr,
+      List<ResourceTypeInfo> resourceTypeInfos) {
     Map<String, Long> typeToValue = parseResourcesString(resourceStr);
     validateResourceTypes(typeToValue.keySet(), resourceTypeInfos);
     Resource resource = Resource.newInstance(0, 0);
@@ -816,68 +816,37 @@ public class ResourceUtils {
     return resource;
   }
 
-  private static Map<String, Long> parseResourcesString(String resourcesStr) {
+  /**
+   * Get a map of resourceName and resourceValue from a string like
+   * '[resourceName1=value1, resourceName2=value2]'.
+   * @param resourcesStr
+   * @return A map of resourceName and resourceValue
+   */
+  @InterfaceAudience.Private
+  @InterfaceStability.Unstable
+  public static Map<String, Long> parseResourcesString(String resourcesStr) {
     Map<String, Long> resources = new HashMap<>();
-    String[] pairs = resourcesStr.trim().split(",");
-    for (String resource : pairs) {
-      resource = resource.trim();
-      if (!resource.matches(RES_PATTERN)) {
-        throw new IllegalArgumentException("\"" + resource + "\" is not a "
-                + "valid resource type/amount pair. "
-                + "Please provide key=amount pairs separated by commas.");
-      }
-      String[] splits = resource.split("=");
-      String key = splits[0], value = splits[1];
-      String units = getUnits(value);
 
-      String valueWithoutUnit = value.substring(0,
-              value.length()- units.length()).trim();
-      long resourceValue = Long.parseLong(valueWithoutUnit);
+    // Ignore the grouping "[]"
+    resourcesStr = resourcesStr.trim();
+    if (resourcesStr.startsWith("[")) {
+      resourcesStr = resourcesStr.substring(1);
+    }
+    if (resourcesStr.endsWith("]")) {
+      resourcesStr = resourcesStr.substring(0, resourcesStr.length()-1);
+    }
 
-      // Convert commandline unit to standard YARN unit.
-      if (units.equals("M") || units.equals("m")) {
-        units = "Mi";
-      } else if (units.equals("G") || units.equals("g")) {
-        units = "Gi";
-      } else if (units.isEmpty()) {
-        // do nothing;
-      } else {
-        throw new IllegalArgumentException("Acceptable units are M/G or empty");
-      }
-
-      // special handle memory-mb and memory
-      if (key.equals(ResourceInformation.MEMORY_URI)) {
-        if (!units.isEmpty()) {
-          resourceValue = UnitsConversionUtil.convert(units, "Mi",
-                  resourceValue);
-        }
-      }
-
-      if (key.equals("memory")) {
-        key = ResourceInformation.MEMORY_URI;
-        resourceValue = UnitsConversionUtil.convert(units, "Mi",
-                resourceValue);
-      }
-
-      // special handle gpu
-      if (key.equals("gpu")) {
-        key = ResourceInformation.GPU_URI;
-      }
-
-      // special handle fpga
-      if (key.equals("fpga")) {
-        key = ResourceInformation.FPGA_URI;
-      }
-
-      resources.put(key, resourceValue);
+    for (String resource : resourcesStr.trim().split(",")) {
+      ResourceInformation standardResource = getResourceInformation(resource);
+      resources.put(standardResource.getName(), standardResource.getValue());
     }
     return resources;
   }
 
   private static void validateResourceTypes(
-          Iterable<String> resourceNames,
-          List<ResourceTypeInfo> resourceTypeInfos)
-          throws ResourceNotFoundException {
+      Iterable<String> resourceNames,
+      List<ResourceTypeInfo> resourceTypeInfos)
+      throws ResourceNotFoundException {
     for (String resourceName : resourceNames) {
       if (!resourceTypeInfos.stream().anyMatch(
           e -> e.getName().equals(resourceName))) {
@@ -886,4 +855,87 @@ public class ResourceUtils {
       }
     }
   }
+
+  /**
+   * Get standard yarn resourceInformation from a string like 'resourceName=
+   * resourceValue'.
+   *
+   * @param resource The String with resource name and resource
+   *                 connected with '='
+   * @return {@link ResourceInformation}
+   */
+  @InterfaceAudience.Private
+  @InterfaceStability.Unstable
+  public static ResourceInformation getResourceInformation(String resource) {
+    if (resource == null || resource.isEmpty()) {
+      throw new IllegalArgumentException("Resource is null or empty. " +
+          "Please provide key=amount pairs");
+    }
+    resource = resource.trim();
+    if (!resource.matches(RES_PATTERN)) {
+      throw new IllegalArgumentException("\"" + resource + "\" is not a " +
+          "valid resource type/amount pair. " +
+          "Please provide key=amount pairs separated by commas.");
+    }
+    String[] splits = resource.split("=");
+    return getStandardYarnResource(splits);
+  }
+
+  private static ResourceInformation getStandardYarnResource(String[]
+      resourcePair) {
+    if(resourcePair == null || resourcePair.length != 2) {
+      throw new IllegalArgumentException("Valid resource type/amount pair. "
+          + "The resourcePair is null or the length of resourcePair is not " +
+          " equal to 2");
+    }
+    String resourceName = resourcePair[0].toLowerCase();
+    String resourceValue = resourcePair[1];
+    String units = ResourceUtils.getUnits(resourceValue);
+
+    String valueWithoutUnit = resourceValue.substring(0, resourceValue.length()
+        - units.length()).trim();
+    Long value;
+    try {
+      value = Long.valueOf(valueWithoutUnit);
+    } catch(NumberFormatException e) {
+      throw new IllegalArgumentException("Can't parse resource value from "
+          + valueWithoutUnit + ", please check the resource configuration: " +
+          resourceName + " " + resourceValue);
+    }
+
+    // special handle memory-mb and memory
+    if (resourceName.equals(ResourceInformation.MEMORY_URI) ||
+        resourceName.equals("memory")) {
+      resourceName = ResourceInformation.MEMORY_URI;
+      // Convert commandline unit to standard YARN unit.
+      if (!units.isEmpty()) {
+        if (units.toLowerCase().equals("m") ||
+            units.toLowerCase().equals("mi")) {
+          units = "Mi";
+        } else if (units.toLowerCase().equals("g") ||
+            units.toLowerCase().equals("gi")) {
+          value = UnitsConversionUtil.convert("Gi", "Mi", value);
+          units = "Mi";
+        } else {
+          throw new IllegalArgumentException("Acceptable units are M/Mi/G/Gi " +
+              "or empty");
+        }
+      }
+    }
+
+    // special handle gpu
+    if (resourceName.equals("gpu")) {
+      resourceName = ResourceInformation.GPU_URI;
+    }
+
+    // special handle fpga
+    if (resourceName.equals("fpga")) {
+      resourceName = ResourceInformation.FPGA_URI;
+    }
+
+    ResourceInformation resourceInformation = ResourceInformation
+        .newInstance(resourceName, units, value);
+    return resourceInformation;
+  }
+
 }

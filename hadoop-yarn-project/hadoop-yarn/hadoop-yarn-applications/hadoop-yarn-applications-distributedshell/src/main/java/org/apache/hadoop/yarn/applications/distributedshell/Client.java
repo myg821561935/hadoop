@@ -92,7 +92,6 @@ import org.apache.hadoop.yarn.exceptions.ResourceNotFoundException;
 import org.apache.hadoop.yarn.exceptions.YARNFeatureNotEnabledException;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.util.DockerClientConfigHandler;
-import org.apache.hadoop.yarn.util.UnitsConversionUtil;
 import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.apache.hadoop.yarn.util.resource.Resources;
 import org.apache.hadoop.yarn.util.timeline.TimelineUtils;
@@ -471,7 +470,8 @@ public class Client {
         Integer.parseInt(cliParser.getOptionValue("master_vcores", "-1"));
     if (cliParser.hasOption("master_resources")) {
       Map<String, Long> masterResources =
-          parseResourcesString(cliParser.getOptionValue("master_resources"));
+          ResourceUtils.parseResourcesString(
+              cliParser.getOptionValue("master_resources"));
       for (Map.Entry<String, Long> entry : masterResources.entrySet()) {
         if (entry.getKey().equals(ResourceInformation.MEMORY_URI)) {
           amMemory = entry.getValue();
@@ -545,7 +545,8 @@ public class Client {
         Integer.parseInt(cliParser.getOptionValue("container_vcores", "-1"));
     if (cliParser.hasOption("container_resources")) {
       Map<String, Long> resources =
-          parseResourcesString(cliParser.getOptionValue("container_resources"));
+          ResourceUtils.parseResourcesString(
+              cliParser.getOptionValue("container_resources"));
       for (Map.Entry<String, Long> entry : resources.entrySet()) {
         if (entry.getKey().equals(ResourceInformation.MEMORY_URI)) {
           containerMemory = entry.getValue();
@@ -1309,40 +1310,5 @@ public class Client {
             resourceName);
       }
     }
-  }
-
-  static Map<String, Long> parseResourcesString(String resourcesStr) {
-    Map<String, Long> resources = new HashMap<>();
-
-    // Ignore the grouping "[]"
-    if (resourcesStr.startsWith("[")) {
-      resourcesStr = resourcesStr.substring(1);
-    }
-    if (resourcesStr.endsWith("]")) {
-      resourcesStr = resourcesStr.substring(0, resourcesStr.length());
-    }
-
-    for (String resource : resourcesStr.trim().split(",")) {
-      resource = resource.trim();
-      if (!resource.matches("^[^=]+=\\d+\\s?\\w*$")) {
-        throw new IllegalArgumentException("\"" + resource + "\" is not a " +
-            "valid resource type/amount pair. " +
-            "Please provide key=amount pairs separated by commas.");
-      }
-      String[] splits = resource.split("=");
-      String key = splits[0], value = splits[1];
-      String units = ResourceUtils.getUnits(value);
-      String valueWithoutUnit = value.substring(
-          0, value.length() - units.length()).trim();
-      Long resourceValue = Long.valueOf(valueWithoutUnit);
-      if (!units.isEmpty()) {
-        resourceValue = UnitsConversionUtil.convert(units, "Mi", resourceValue);
-      }
-      if (key.equals("memory")) {
-        key = ResourceInformation.MEMORY_URI;
-      }
-      resources.put(key, resourceValue);
-    }
-    return resources;
   }
 }

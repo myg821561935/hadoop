@@ -19,6 +19,7 @@
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 
@@ -65,12 +66,17 @@ import org.apache.hadoop.yarn.util.resource.CustomResourceTypesConfigurationProv
 import org.apache.hadoop.yarn.util.resource.DominantResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.Resources;
+import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static org.apache.hadoop.yarn.api.records.ResourceInformation.GPU_URI;
+import static org.apache.hadoop.yarn.conf.YarnConfiguration.RESOURCE_TYPES;
 import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.MAXIMUM_ALLOCATION_MB;
 import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.MAX_ASSIGN_PER_HEARTBEAT;
+import static org.apache.hadoop.yarn.server.resourcemanager.scheduler
+    .capacity.CapacitySchedulerConfiguration.RESOURCE_CALCULATOR_CLASS;
 
 public class TestContainerAllocation {
 
@@ -222,6 +228,156 @@ public class TestContainerAllocation {
           new ArrayList<ContainerId>()).getAllocatedContainers();
     // should be able to fetch the container;
     Assert.assertEquals(1, containers.size());
+  }
+
+  @Test
+  public void testContainerAllocationForAbsoluteResourceConfig()
+      throws Exception{
+    /**
+     * Test case: There are two queues in the cluster, a and b. Queue a has gpu
+     * but queue b doesn't have.
+     *
+     * No matter cluster resource is added or reduced, queue a supports
+     * applications with gpu request, but queue b can't,
+     */
+    CapacitySchedulerConfiguration csConf =
+        setupAbsoluteResourceConfiguration();
+    MockRM rm = new MockRM(csConf);
+    rm.start();
+
+    // Register nodes
+    HashMap<String, Long> nodeResources = new HashMap();
+    nodeResources.put(GPU_URI, 3L);
+    Resource node1Resource = Resource.newInstance(10 * GB, 5, nodeResources);
+    Resource node2Resource = Resource.newInstance(10 * GB, 5, nodeResources);
+    // Add few nodes
+    MockNM nm1 = rm.registerNode("127.0.0.1:1234", node1Resource);
+    MockNM nm2 = rm.registerNode("127.0.0.2:1234", node2Resource);
+
+    nm1.nodeHeartbeat(true);
+    nm2.nodeHeartbeat(true);
+
+    // Wait for nodemanager to register
+    int waitCount = 20, size;
+    while (rm.getRMContext().getRMNodes().size() != 2
+        && waitCount-- > 0) {
+      size = rm.getRMContext().getRMNodes().size();
+      LOG.info("Waiting for node managers to register : " + size);
+      Thread.sleep(100);
+    }
+    Assert.assertEquals(2, rm.getRMContext().getRMNodes().size());
+
+    // Request a gpu resource from queue a
+    HashMap<String, Long> containerResources = new HashMap();
+    containerResources.put(GPU_URI, 2L);
+    Resource containerResource = Resource.newInstance(1 * GB, 1,
+        containerResources);
+    RMApp app1 = rm.submitApp(200, "a");
+    allocateWithSufficientResource(rm, nm1, containerResource, app1);
+
+    // Request a gpu resource from queue b
+    RMApp app2 = rm.submitApp(200, "b");
+    allocateWithInsufficientResource(rm, nm1, containerResource, app2);
+
+    // Reduce cluster resources
+    rm.unRegisterNode(nm2);
+    RMApp app3 = rm.submitApp(200, "a");
+    allocateWithSufficientResource(rm, nm1, containerResource, app3);
+
+    RMApp app4 = rm.submitApp(200, "b");
+    allocateWithInsufficientResource(rm, nm1, containerResource, app4);
+
+    // Add cluster resources
+    MockNM nm3 = rm.registerNode("127.0.0.2:1234", node1Resource);
+    MockNM nm4 = rm.registerNode("127.0.0.2:1234", node1Resource);
+
+    nm3.nodeHeartbeat(true);
+    nm4.nodeHeartbeat(true);
+
+    RMApp app5 = rm.submitApp(200, "a");
+    allocateWithSufficientResource(rm, nm1, containerResource, app5);
+
+    RMApp app6 = rm.submitApp(200, "b");
+    allocateWithInsufficientResource(rm, nm1, containerResource, app6);
+
+    rm.stop();
+  }
+
+  private CapacitySchedulerConfiguration setupAbsoluteResourceConfiguration() {
+    YarnConfiguration yarnConf = new YarnConfiguration();
+    CapacitySchedulerConfiguration csConf =
+        new CapacitySchedulerConfiguration(yarnConf);
+    csConf.set(RESOURCE_TYPES, GPU_URI);
+    csConf.set(RESOURCE_CALCULATOR_CLASS,
+        "org.apache.hadoop.yarn.util.resource.DominantResourceCalculator");
+    csConf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+        ResourceScheduler.class);
+    ResourceUtils.resetResourceTypes(csConf);
+
+    HashMap<String, Long> queueAMinResources = new HashMap();
+    HashMap<String, Long> queueAMaxResources = new HashMap();
+    queueAMinResources.put(GPU_URI, 2L);
+    queueAMaxResources.put(GPU_URI, 6L);
+    Resource queueAMin = Resource.newInstance(2 * GB, 2,
+        queueAMinResources);
+    Resource queueAMax = Resource.newInstance(4 * GB, 4,
+        queueAMaxResources);
+
+    Resource queueBMin = Resource.newInstance(2 * GB, 2);
+    Resource queueBMax = Resource.newInstance(16 * GB, 6);
+    csConf.setQueues(CapacitySchedulerConfiguration.ROOT,
+        new String[]{"a", "b"});
+
+    csConf.setMinimumResourceRequirement("",
+        CapacitySchedulerConfiguration.ROOT + ".a", queueAMin);
+    csConf.setMaximumResourceRequirement("",
+        CapacitySchedulerConfiguration.ROOT + ".a", queueAMax);
+    csConf.setMinimumResourceRequirement("",
+        CapacitySchedulerConfiguration.ROOT + ".b", queueBMin);
+    csConf.setMaximumResourceRequirement("",
+        CapacitySchedulerConfiguration.ROOT + ".b", queueBMax);
+    return csConf;
+  }
+
+  private void allocateWithInsufficientResource(MockRM rm, MockNM nm,
+      Resource containerResource, RMApp app) throws Exception {
+    MockAM am = MockRM.launchAndRegisterAM(app, rm, nm);
+
+    // Request a container.
+    AllocateResponse allocateResponse = am.allocate(containerResource, 1,
+        new ArrayList<ContainerId>());
+    nm.nodeHeartbeat(true);
+    int waitCounter = 20;
+    LOG.info("heartbeating nm1");
+    while (allocateResponse.getAllocatedContainers().size() < 1
+        && waitCounter-- > 0) {
+      LOG.info("Waiting for containers to be created for app1...");
+      Thread.sleep(500);
+      allocateResponse = am.schedule();
+    }
+    LOG.info("received container : "
+        + allocateResponse.getAllocatedContainers().size());
+
+    // No container should be allocated.
+    // Internally it should not been reserved.
+    Assert.assertTrue(allocateResponse.getAllocatedContainers().size() == 0);
+    rm.killApp(app.getApplicationId());
+    nm.nodeHeartbeat(true);
+  }
+
+  private void allocateWithSufficientResource(MockRM rm, MockNM nm,
+      Resource containerResource, RMApp app) throws Exception {
+    MockAM am = MockRM.launchAndRegisterAM(app, rm, nm);
+
+    // Request a container.
+    am.allocate(containerResource, 1, new ArrayList<ContainerId>());
+    ContainerId containerId =
+        ContainerId.newContainerId(am.getApplicationAttemptId(), 2);
+    nm.nodeHeartbeat(true);
+    Assert.assertTrue(rm.waitForState(nm, containerId,
+        RMContainerState.ALLOCATED));
+    rm.killApp(app.getApplicationId());
+    nm.nodeHeartbeat(true);
   }
 
   // This is to test whether LogAggregationContext is passed into

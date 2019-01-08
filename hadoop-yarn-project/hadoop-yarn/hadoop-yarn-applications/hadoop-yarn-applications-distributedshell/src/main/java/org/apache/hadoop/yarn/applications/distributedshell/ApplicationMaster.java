@@ -674,7 +674,7 @@ public class ApplicationMaster {
         "container_vcores", "-1"));
     containerResources = new HashMap<>();
     if (cliParser.hasOption("container_resources")) {
-      Map<String, Long> resources = Client.parseResourcesString(
+      Map<String, Long> resources = ResourceUtils.parseResourcesString(
           cliParser.getOptionValue("container_resources"));
       for (Map.Entry<String, Long> entry : resources.entrySet()) {
         containerResources.put(entry.getKey(), entry.getValue());

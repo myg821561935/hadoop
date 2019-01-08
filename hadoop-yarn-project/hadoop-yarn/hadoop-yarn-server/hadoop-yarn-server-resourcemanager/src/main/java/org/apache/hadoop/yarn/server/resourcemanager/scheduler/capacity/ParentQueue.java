@@ -996,8 +996,14 @@ public class ParentQueue extends AbstractCSQueue {
         // childMaxResource is empty, consider parent's max resource alone.
         Resource childMaxResource = childQueue.getQueueResourceQuotas()
             .getConfiguredMaxResource(label);
-        Resource effMaxResource = Resources.min(resourceCalculator,
-            resourceByLabel, childMaxResource.equals(Resources.none())
+
+        // Use Resources.componentwiseMin, not Resources.min. When
+        // parentMaxRes have available GPUs but childMaxResource doesn't,
+        // parentMaxRes may be smaller than childMaxResource using
+        // Resources.min, if it has less memory. In this case, effMaxResource
+        // would have available GPUs which it shouldn't have.
+        Resource effMaxResource = Resources.componentwiseMin(
+            childMaxResource.equals(Resources.none())
                 ? parentMaxRes
                 : childMaxResource,
             parentMaxRes);
@@ -1067,8 +1073,12 @@ public class ParentQueue extends AbstractCSQueue {
             dResourceInformation.getUnits(), nResourceInformation.getUnits(),
             dResourceInformation.getValue());
         if (dValue != 0) {
+          // If there are resources added to cluster, queue configured min
+          // resource should not be increased automatically for absolute
+          // configuration
+          float minRatio = Math.min((float) nValue / dValue, 1);
           effectiveMinRatioPerResource.put(nResourceInformation.getName(),
-              (float) nValue / dValue);
+              minRatio);
         }
       }
     }

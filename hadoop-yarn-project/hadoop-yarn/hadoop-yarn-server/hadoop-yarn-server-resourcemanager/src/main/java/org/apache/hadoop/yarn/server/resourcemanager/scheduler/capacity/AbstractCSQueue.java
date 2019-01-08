@@ -25,7 +25,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.StringUtils;
@@ -57,7 +59,6 @@ import org.apache.hadoop.yarn.security.YarnAuthorizationProvider;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.activities.ActivitiesManager;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.AbsoluteResourceType;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueResourceQuotas;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceLimits;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceUsage;
@@ -93,7 +94,6 @@ public abstract class AbstractCSQueue implements CSQueue {
 
   final ResourceCalculator resourceCalculator;
   Set<String> accessibleLabels;
-  Set<String> resourceTypes;
   final RMNodeLabelsManager labelManager;
   String defaultLabelExpression;
   private String multiNodeSortingPolicyName = null;
@@ -340,10 +340,6 @@ public abstract class AbstractCSQueue implements CSQueue {
       this.defaultLabelExpression =
           configuration.getDefaultNodeLabelExpression(
               getQueuePath());
-      this.resourceTypes = new HashSet<String>();
-      for (AbsoluteResourceType type : AbsoluteResourceType.values()) {
-        resourceTypes.add(type.toString().toLowerCase());
-      }
 
       // inherit from parent if labels not set
       if (this.accessibleLabels == null && parent != null) {
@@ -494,12 +490,14 @@ public abstract class AbstractCSQueue implements CSQueue {
       Resource clusterResource) {
     CapacitySchedulerConfiguration conf = csContext.getConfiguration();
     Set<String> configuredNodelabels = conf.getConfiguredNodeLabels(queuePath);
+    Set<String> resources = Arrays.stream(clusterResource.getResources()).map(x
+        -> x.getName()).collect(Collectors.toSet());
 
     for (String label : configuredNodelabels) {
       Resource minResource = conf.getMinimumResourceRequirement(label,
-          queuePath, resourceTypes);
+          queuePath, resources);
       Resource maxResource = conf.getMaximumResourceRequirement(label,
-          queuePath, resourceTypes);
+          queuePath, resources);
 
       if (LOG.isDebugEnabled()) {
         LOG.debug("capacityConfigType is '" + capacityConfigType
@@ -914,8 +912,8 @@ public abstract class AbstractCSQueue implements CSQueue {
       Resource queueMaxResource =
           getQueueMaxResource(nodePartition);
 
-      return Resources.min(resourceCalculator, clusterResource,
-          queueMaxResource, currentResourceLimits.getLimit());
+      return Resources.componentwiseMin(queueMaxResource,
+          currentResourceLimits.getLimit());
     } else if (schedulingMode == SchedulingMode.IGNORE_PARTITION_EXCLUSIVITY) {
       // When we doing non-exclusive resource allocation, maximum capacity of
       // all queues on this label equals to total resource with the label.

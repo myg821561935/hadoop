@@ -29,7 +29,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FSLeafQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairSchedulerConfiguration;
-import org.apache.hadoop.yarn.util.resource.ResourceUtils;
+import org.apache.hadoop.yarn.util.resource.Resources;
 import org.junit.Test;
 
 import java.util.Collections;
@@ -78,7 +78,10 @@ public class TestApplicationMasterServiceFair extends
         ResourceInformation.newInstance(CUSTOM_RES, "G", 0, 4);
     riMap.put(CUSTOM_RES, res1);
 
-    ResourceUtils.initializeResourcesFromResourceInformationMap(riMap);
+    //Resources.NONE and Resources.UNBOUNDED should be refreshed with the map,
+    //Otherwise, Fair scheduler will use the wrong Resources.UNBOUNDED
+    //to compute the max resources of queues
+    Resources.refreshResourcesFromMap(riMap);
 
     final YarnConfiguration yarnConf = createYarnConfig();
     // Don't reset resource types since we have already configured resource

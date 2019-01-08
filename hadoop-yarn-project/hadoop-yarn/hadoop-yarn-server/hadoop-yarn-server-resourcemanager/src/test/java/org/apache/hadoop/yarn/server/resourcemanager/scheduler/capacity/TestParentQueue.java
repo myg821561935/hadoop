@@ -1013,8 +1013,10 @@ public class TestParentQueue {
     root.updateClusterResource(clusterResource,
         new ResourceLimits(clusterResource));
 
-    Resource QUEUE_B_RESOURCE_70PERC = Resource.newInstance(7 * 1024, 27);
-    Resource QUEUE_A_RESOURCE_30PERC = Resource.newInstance(3 * 1024, 12);
+    // For absolute configuration, resource quota shouldn't be increased
+    // automatically, when some kind of resource of cluster is increased.
+    Resource QUEUE_B_RESOURCE_70PERC = Resource.newInstance(7 * 1024, 22);
+    Resource QUEUE_A_RESOURCE_30PERC = Resource.newInstance(3 * 1024, 10);
     assertEquals(a.getQueueResourceQuotas().getConfiguredMinResource(),
         QUEUE_A_RESOURCE);
     assertEquals(b.getQueueResourceQuotas().getConfiguredMinResource(),

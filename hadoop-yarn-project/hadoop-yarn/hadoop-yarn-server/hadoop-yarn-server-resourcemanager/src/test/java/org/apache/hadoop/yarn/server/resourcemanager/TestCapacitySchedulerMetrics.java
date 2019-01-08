@@ -98,7 +98,12 @@ public class TestCapacitySchedulerMetrics {
     // For async mode, the number of alloc might be bigger than 1
     Assert.assertTrue(csMetrics.getNumOfAllocates() > 0);
     // But there will be only 2 successful commit (1 AM + 1 task)
-    Assert.assertEquals(2, csMetrics.getNumOfCommitSuccess());
+    try {
+      GenericTestUtils.waitFor(()
+          -> csMetrics.getNumOfCommitSuccess() == 2, 100, 3000);
+    } catch(TimeoutException e) {
+      Assert.fail("CS metrics not updated on resource commit.");
+    }
   }
 
   @After
