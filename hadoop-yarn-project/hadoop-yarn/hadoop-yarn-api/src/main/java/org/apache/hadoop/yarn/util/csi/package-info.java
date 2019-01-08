@@ -15,31 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package org.apache.hadoop.fs.s3a;
-
-import org.apache.hadoop.conf.Configuration;
-
 /**
- * Run the encryption tests against the Fast output stream.
- * This verifies that both file writing paths can encrypt their data.
+ * Package that includes some CSI utility classes.
  */
-
-public class ITestS3AEncryptionSSECBlockOutputStream
-    extends AbstractTestS3AEncryption {
-
-  @Override
-  protected Configuration createConfiguration() {
-    Configuration conf = super.createConfiguration();
-    conf.set(Constants.FAST_UPLOAD_BUFFER,
-        Constants.FAST_UPLOAD_BYTEBUFFER);
-    conf.set(Constants.SERVER_SIDE_ENCRYPTION_KEY,
-        "4niV/jPK5VFRHY+KNb6wtqYd4xXyMgdJ9XQJpcQUVbs=");
-    return conf;
-  }
-
-  @Override
-  protected S3AEncryptionMethods getSSEAlgorithm() {
-    return S3AEncryptionMethods.SSE_C;
-  }
-}
+package org.apache.hadoop.yarn.util.csi;

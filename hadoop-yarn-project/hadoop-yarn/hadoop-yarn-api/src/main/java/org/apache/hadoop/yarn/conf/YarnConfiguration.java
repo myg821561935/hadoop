@@ -1665,6 +1665,9 @@ public class YarnConfiguration extends Configuration {
   public static final String NVIDIA_DOCKER_V1 = "nvidia-docker-v1";
 
   @Private
+  public static final String NVIDIA_DOCKER_V2 = "nvidia-docker-v2";
+
+  @Private
   public static final String DEFAULT_NM_GPU_DOCKER_PLUGIN_IMPL =
       NVIDIA_DOCKER_V1;
 
@@ -3443,13 +3446,28 @@ public class YarnConfiguration extends Configuration {
   // CSI Volume configs
   ////////////////////////////////
   /**
-   * One or more socket addresses for csi-adaptor.
-   * Multiple addresses are delimited by ",".
+   * TERMS:
+   * csi-driver: a 3rd party CSI driver which implements the CSI protocol.
+   *   It is provided by the storage system.
+   * csi-driver-adaptor: this is an internal RPC service working
+   *   as a bridge between YARN and a csi-driver.
    */
   public static final String NM_CSI_ADAPTOR_PREFIX =
       NM_PREFIX + "csi-driver-adaptor.";
+  public static final String NM_CSI_DRIVER_PREFIX =
+      NM_PREFIX + "csi-driver.";
+  public static final String NM_CSI_DRIVER_ENDPOINT_SUFFIX =
+      ".endpoint";
+  public static final String NM_CSI_ADAPTOR_ADDRESS_SUFFIX =
+      ".address";
+  /**
+   * One or more socket addresses for csi-adaptor.
+   * Multiple addresses are delimited by ",".
+   */
   public static final String NM_CSI_ADAPTOR_ADDRESSES =
       NM_CSI_ADAPTOR_PREFIX + "addresses";
+  public static final String NM_CSI_DRIVER_NAMES =
+      NM_CSI_DRIVER_PREFIX + "names";
 
   ////////////////////////////////
   // Other Configs
@@ -3852,6 +3870,10 @@ public class YarnConfiguration extends Configuration {
   @Private
   public static final String TIMELINE_SERVICE_COLLECTOR_BIND_HOST =
       TIMELINE_SERVICE_COLLECTOR_PREFIX + "bind-host";
+
+  @Private
+  public static final String TIMELINE_SERVICE_COLLECTOR_BIND_PORT_RANGES =
+      TIMELINE_SERVICE_COLLECTOR_PREFIX + "bind-port-ranges";
 
   @Private
   public static final String TIMELINE_SERVICE_COLLECTOR_WEBAPP_ADDRESS =

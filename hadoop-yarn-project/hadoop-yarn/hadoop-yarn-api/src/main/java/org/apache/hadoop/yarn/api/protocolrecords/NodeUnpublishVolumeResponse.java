@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,30 +15,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.hadoop.yarn.api.protocolrecords;
 
-package org.apache.hadoop.fs.s3a;
-
-import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.yarn.util.Records;
 
 /**
- * Run the encryption tests against the block output stream.
+ * The response sent by a CSI driver adaptor to the node manager
+ * after un-publishing a volume on the node.
  */
-public class ITestS3AEncryptionSSES3BlockOutputStream
-    extends AbstractTestS3AEncryption {
+public class NodeUnpublishVolumeResponse {
 
-  @Override
-  protected Configuration createConfiguration() {
-    Configuration conf = super.createConfiguration();
-    conf.set(Constants.FAST_UPLOAD_BUFFER,
-        Constants.FAST_UPLOAD_BYTEBUFFER);
-    //must specify encryption key as empty because SSE-S3 does not allow it,
-    //nor can it be null.
-    conf.set(Constants.SERVER_SIDE_ENCRYPTION_KEY, "");
-    return conf;
-  }
-
-  @Override
-  protected S3AEncryptionMethods getSSEAlgorithm() {
-    return S3AEncryptionMethods.SSE_S3;
+  public static NodeUnpublishVolumeResponse newInstance() {
+    return Records.newRecord(NodeUnpublishVolumeResponse.class);
   }
 }

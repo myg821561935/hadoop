@@ -28,11 +28,14 @@ import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartCommitUploadPartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadList;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
 import org.apache.hadoop.ozone.om.protocol.OzoneManagerProtocol;
 import org.apache.hadoop.ozone.om.protocolPB.OzoneManagerProtocolPB;
+import org.apache.hadoop.ozone.om.ratis.OzoneManagerRatisClient;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .AllocateBlockRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
@@ -95,10 +98,18 @@ import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .LookupKeyRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .LookupKeyResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.
+    MultipartUploadAbortRequest;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartUploadAbortResponse;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .MultipartCommitUploadPartRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .MultipartCommitUploadPartResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartUploadCompleteRequest;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartUploadCompleteResponse;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .MultipartInfoInitiateRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
@@ -107,6 +118,7 @@ import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .OMRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .OMResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.Part;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .RenameKeyRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
@@ -148,6 +160,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -160,6 +173,8 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
   private static final Logger LOG = LoggerFactory
       .getLogger(OzoneManagerProtocolServerSideTranslatorPB.class);
   private final OzoneManagerProtocol impl;
+  private final OzoneManagerRatisClient omRatisClient;
+  private final boolean isRatisEnabled;
 
   /**
    * Constructs an instance of the server handler.
@@ -167,8 +182,11 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
    * @param impl OzoneManagerProtocolPB
    */
   public OzoneManagerProtocolServerSideTranslatorPB(
-      OzoneManagerProtocol impl) {
+      OzoneManagerProtocol impl, OzoneManagerRatisClient ratisClient,
+      boolean enableRatis) {
     this.impl = impl;
+    this.omRatisClient = ratisClient;
+    this.isRatisEnabled = enableRatis;
   }
 
   /**
@@ -179,10 +197,29 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
   @Override
    public OMResponse submitRequest(RpcController controller,
       OMRequest request) throws ServiceException {
-    Type cmdType = request.getCmdType();
+    if (isRatisEnabled) {
+      return submitRequestToRatis(request);
+    } else {
+      return submitRequestToOM(request);
+    }
+  }
 
+  /**
+   * Submits request to OM's Ratis server.
+   */
+  private OMResponse submitRequestToRatis(OMRequest request) {
+    return omRatisClient.sendCommand(request);
+  }
+
+  /**
+   * Submits request directly to OM.
+   */
+  private OMResponse submitRequestToOM(OMRequest request)
+      throws ServiceException {
+    Type cmdType = request.getCmdType();
     OMResponse.Builder responseBuilder = OMResponse.newBuilder()
         .setCmdType(cmdType);
+
     switch (cmdType) {
     case CreateVolume:
       CreateVolumeResponse createVolumeResponse = createVolume(
@@ -306,6 +343,19 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
       responseBuilder.setCommitMultiPartUploadResponse(
           commitUploadPartResponse);
       break;
+    case CompleteMultiPartUpload:
+      MultipartUploadCompleteResponse completeMultipartUploadResponse =
+          completeMultipartUpload(
+              request.getCompleteMultiPartUploadRequest());
+      responseBuilder.setCompleteMultiPartUploadResponse(
+          completeMultipartUploadResponse);
+      break;
+    case AbortMultiPartUpload:
+      MultipartUploadAbortResponse multipartUploadAbortResponse =
+          abortMultipartUpload(request.getAbortMultiPartUploadRequest());
+      responseBuilder.setAbortMultiPartUploadResponse(
+          multipartUploadAbortResponse);
+      break;
     case ServiceList:
       ServiceListResponse serviceListResponse = getServiceList(
           request.getServiceListRequest());
@@ -318,7 +368,6 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
     }
     return responseBuilder.build();
   }
-
   // Convert and exception to corresponding status code
   private Status exceptionToResponseStatus(IOException ex) {
     if (ex instanceof OMException) {
@@ -368,7 +417,16 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
         return Status.NO_SUCH_MULTIPART_UPLOAD_ERROR;
       case UPLOAD_PART_FAILED:
         return Status.MULTIPART_UPLOAD_PARTFILE_ERROR;
-
+      case COMPLETE_MULTIPART_UPLOAD_FAILED:
+        return Status.COMPLETE_MULTIPART_UPLOAD_ERROR;
+      case MISMATCH_MULTIPART_LIST:
+        return Status.MISMATCH_MULTIPART_LIST;
+      case MISSING_UPLOAD_PARTS:
+        return Status.MISSING_UPLOAD_PARTS;
+      case ENTITY_TOO_SMALL:
+        return Status.ENTITY_TOO_SMALL;
+      case ABORT_MULTIPART_UPLOAD_FAILED:
+        return Status.ABORT_MULTIPART_UPLOAD_FAILED;
       default:
         return Status.INTERNAL_ERROR;
       }
@@ -815,6 +873,10 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
           .setMultipartUploadID(keyArgs.getMultipartUploadID())
           .setIsMultipartKey(keyArgs.getIsMultipartKey())
           .setMultipartUploadPartNumber(keyArgs.getMultipartNumber())
+          .setDataSize(keyArgs.getDataSize())
+          .setLocationInfoList(keyArgs.getKeyLocationsList().stream()
+              .map(OmKeyLocationInfo::getFromProtobuf)
+              .collect(Collectors.toList()))
           .build();
       OmMultipartCommitUploadPartInfo commitUploadPartInfo =
           impl.commitMultipartUploadPart(omKeyArgs, request.getClientID());
@@ -825,4 +887,64 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements
     }
     return resp.build();
   }
+
+
+  private MultipartUploadCompleteResponse completeMultipartUpload(
+      MultipartUploadCompleteRequest request) {
+    MultipartUploadCompleteResponse.Builder response =
+        MultipartUploadCompleteResponse.newBuilder();
+
+    try {
+      KeyArgs keyArgs = request.getKeyArgs();
+      List<Part> partsList = request.getPartsListList();
+
+      TreeMap<Integer, String> partsMap = new TreeMap<>();
+      for (Part part : partsList) {
+        partsMap.put(part.getPartNumber(), part.getPartName());
+      }
+
+      OmMultipartUploadList omMultipartUploadList =
+          new OmMultipartUploadList(partsMap);
+
+      OmKeyArgs omKeyArgs = new OmKeyArgs.Builder()
+          .setVolumeName(keyArgs.getVolumeName())
+          .setBucketName(keyArgs.getBucketName())
+          .setKeyName(keyArgs.getKeyName())
+          .setMultipartUploadID(keyArgs.getMultipartUploadID())
+          .build();
+      OmMultipartUploadCompleteInfo omMultipartUploadCompleteInfo = impl
+          .completeMultipartUpload(omKeyArgs, omMultipartUploadList);
+
+      response.setVolume(omMultipartUploadCompleteInfo.getVolume())
+          .setBucket(omMultipartUploadCompleteInfo.getBucket())
+          .setKey(omMultipartUploadCompleteInfo.getKey())
+          .setHash(omMultipartUploadCompleteInfo.getHash());
+      response.setStatus(Status.OK);
+    } catch (IOException ex) {
+      response.setStatus(exceptionToResponseStatus(ex));
+    }
+    return response.build();
+  }
+
+  private MultipartUploadAbortResponse abortMultipartUpload(
+      MultipartUploadAbortRequest multipartUploadAbortRequest) {
+    MultipartUploadAbortResponse.Builder response =
+        MultipartUploadAbortResponse.newBuilder();
+
+    try {
+      KeyArgs keyArgs = multipartUploadAbortRequest.getKeyArgs();
+      OmKeyArgs omKeyArgs = new OmKeyArgs.Builder()
+          .setVolumeName(keyArgs.getVolumeName())
+          .setBucketName(keyArgs.getBucketName())
+          .setKeyName(keyArgs.getKeyName())
+          .setMultipartUploadID(keyArgs.getMultipartUploadID())
+          .build();
+      impl.abortMultipartUpload(omKeyArgs);
+      response.setStatus(Status.OK);
+    } catch (IOException ex) {
+      response.setStatus(exceptionToResponseStatus(ex));
+    }
+    return response.build();
+  }
+
 }
