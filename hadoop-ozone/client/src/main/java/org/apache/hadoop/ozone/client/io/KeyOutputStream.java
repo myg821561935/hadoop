@@ -50,7 +50,7 @@ import java.util.ListIterator;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Maintaining a list of ChunkInputStream. Write based on offset.
+ * Maintaining a list of BlockInputStream. Write based on offset.
  *
  * Note that this may write to multiple containers in one write call. In case
  * that first container succeeded but later ones failed, the succeeded writes
@@ -86,6 +86,7 @@ public class KeyOutputStream extends OutputStream {
    * A constructor for testing purpose only.
    */
   @VisibleForTesting
+  @SuppressWarnings("parameternumber")
   public KeyOutputStream() {
     streamEntries = new ArrayList<>();
     omClient = null;
@@ -143,6 +144,8 @@ public class KeyOutputStream extends OutputStream {
     return locationInfoList;
   }
 
+
+  @SuppressWarnings("parameternumber")
   public KeyOutputStream(OpenKeySession handler,
       XceiverClientManager xceiverClientManager,
       StorageContainerLocationProtocolClientSideTranslatorPB scmClient,
@@ -654,6 +657,7 @@ public class KeyOutputStream extends OutputStream {
     private final long watchTimeout;
     private List<ByteBuffer> bufferList;
 
+    @SuppressWarnings("parameternumber")
     BlockOutputStreamEntry(BlockID blockID, String key,
         XceiverClientManager xceiverClientManager,
         XceiverClientSpi xceiverClient, String requestId, int chunkSize,
