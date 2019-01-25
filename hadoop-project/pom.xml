@@ -1470,6 +1470,11 @@
           <version>${snakeyaml.version}</version>
         </dependency>
         <dependency>
+          <groupId>org.hamcrest</groupId>
+          <artifactId>hamcrest-library</artifactId>
+          <version>1.3</version>
+        </dependency>
+        <dependency>
           <groupId>org.assertj</groupId>
           <artifactId>assertj-core</artifactId>
           <version>3.8.0</version>
@@ -2030,6 +2035,16 @@
                 <additionalOption>--add-exports</additionalOption>
                 <additionalOption>java.naming/com.sun.jndi.ldap=ALL-UNNAMED</additionalOption>
               </additionalOptions>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+              <compilerArgs combine.children="append">
+                <arg>--add-exports</arg>
+                <arg>java.naming/com.sun.jndi.ldap=ALL-UNNAMED</arg>
+              </compilerArgs>
             </configuration>
           </plugin>
         </plugins>

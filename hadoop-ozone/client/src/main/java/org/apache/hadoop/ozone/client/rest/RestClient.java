@@ -26,6 +26,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.protocol.StorageType;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 import org.apache.hadoop.hdds.scm.client.HddsClientUtils;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.ozone.OzoneAcl;
 import org.apache.hadoop.ozone.OzoneConfigKeys;
@@ -44,12 +45,15 @@ import org.apache.hadoop.ozone.client.rest.response.VolumeInfo;
 import org.apache.hadoop.ozone.om.OMConfigKeys;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
+import org.apache.hadoop.ozone.om.helpers.S3SecretValue;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.ServicePort;
+import org.apache.hadoop.ozone.security.OzoneTokenIdentifier;
 import org.apache.hadoop.ozone.web.response.ListBuckets;
 import org.apache.hadoop.ozone.web.response.ListKeys;
 import org.apache.hadoop.ozone.web.response.ListVolumes;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.Time;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
@@ -114,7 +118,7 @@ public class RestClient implements ClientProtocol {
     try {
       Preconditions.checkNotNull(conf);
       this.conf = conf;
-
+      this.ugi = UserGroupInformation.getCurrentUser();
       long socketTimeout = conf.getTimeDuration(
           OzoneConfigKeys.OZONE_CLIENT_SOCKET_TIMEOUT,
           OzoneConfigKeys.OZONE_CLIENT_SOCKET_TIMEOUT_DEFAULT,
@@ -150,7 +154,7 @@ public class RestClient implements ClientProtocol {
                   .setConnectTimeout(Math.toIntExact(connectionTimeout))
                   .build())
           .build();
-      this.ugi = UserGroupInformation.getCurrentUser();
+
       this.userRights = conf.getEnum(OMConfigKeys.OZONE_OM_USER_RIGHTS,
           OMConfigKeys.OZONE_OM_USER_RIGHTS_DEFAULT);
 
@@ -668,6 +672,50 @@ public class RestClient implements ClientProtocol {
     } catch (URISyntaxException e) {
       throw new IOException(e);
     }
+  }
+
+  /**
+   * Get a valid Delegation Token. Not supported for RestClient.
+   *
+   * @param renewer the designated renewer for the token
+   * @return Token<OzoneDelegationTokenSelector>
+   * @throws IOException
+   */
+  @Override
+  public Token<OzoneTokenIdentifier> getDelegationToken(Text renewer)
+      throws IOException {
+    throw new IOException("Method not supported");
+  }
+
+  /**
+   * Renew an existing delegation token. Not supported for RestClient.
+   *
+   * @param token delegation token obtained earlier
+   * @return the new expiration time
+   * @throws IOException
+   */
+  @Override
+  public long renewDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    throw new IOException("Method not supported");
+  }
+
+  /**
+   * Cancel an existing delegation token. Not supported for RestClient.
+   *
+   * @param token delegation token
+   * @throws IOException
+   */
+  @Override
+  public void cancelDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    throw new IOException("Method not supported");
+  }
+
+  @Override
+  public S3SecretValue getS3Secret(String kerberosID) throws IOException {
+    throw new UnsupportedOperationException("Ozone REST protocol does not " +
+        "support this operation.");
   }
 
   @Override

@@ -36,13 +36,13 @@ ${BUCKET}             generated
 *** Test Cases ***
 
 Test Multipart Upload
-    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey --storage-class REDUCED_REDUNDANCY
+    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey
     ${uploadID} =       Execute and checkrc     echo '${result}' | jq -r '.UploadId'    0
                         Should contain          ${result}    ${BUCKET}
                         Should contain          ${result}    multipartKey
                         Should contain          ${result}    UploadId
 # initiate again
-    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey --storage-class REDUCED_REDUNDANCY
+    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey
     ${nextUploadID} =   Execute and checkrc     echo '${result}' | jq -r '.UploadId'    0
                         Should contain          ${result}    ${BUCKET}
                         Should contain          ${result}    multipartKey
@@ -67,7 +67,7 @@ Test Multipart Upload
 
 
 Test Multipart Upload Complete
-    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey1 --storage-class REDUCED_REDUNDANCY
+    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey1
     ${uploadID} =       Execute and checkrc     echo '${result}' | jq -r '.UploadId'    0
                         Should contain          ${result}    ${BUCKET}
                         Should contain          ${result}    multipartKey
@@ -101,7 +101,7 @@ Test Multipart Upload Complete
 
 
 Test Multipart Upload Complete Entity too small
-    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey2 --storage-class REDUCED_REDUNDANCY
+    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey2
     ${uploadID} =       Execute and checkrc     echo '${result}' | jq -r '.UploadId'    0
                         Should contain          ${result}    ${BUCKET}
                         Should contain          ${result}    multipartKey
@@ -124,7 +124,7 @@ Test Multipart Upload Complete Entity too small
 
 
 Test Multipart Upload Complete Invalid part
-    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey3 --storage-class REDUCED_REDUNDANCY
+    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey3
     ${uploadID} =       Execute and checkrc     echo '${result}' | jq -r '.UploadId'    0
                         Should contain          ${result}    ${BUCKET}
                         Should contain          ${result}    multipartKey
@@ -145,6 +145,17 @@ Test Multipart Upload Complete Invalid part
     ${result} =         Execute AWSS3APICli and checkrc  complete-multipart-upload --upload-id ${uploadID} --bucket ${BUCKET} --key multipartKey3 --multipart-upload 'Parts=[{ETag=etag1,PartNumber=1},{ETag=etag2,PartNumber=2}]'    255
                         Should contain          ${result}    InvalidPart
 
+Test abort Multipart upload
+    ${result} =         Execute AWSS3APICli     create-multipart-upload --bucket ${BUCKET} --key multipartKey4 --storage-class REDUCED_REDUNDANCY
+    ${uploadID} =       Execute and checkrc     echo '${result}' | jq -r '.UploadId'    0
+                        Should contain          ${result}    ${BUCKET}
+                        Should contain          ${result}    multipartKey
+                        Should contain          ${result}    UploadId
+
+    ${result} =         Execute AWSS3APICli and checkrc    abort-multipart-upload --bucket ${BUCKET} --key multipartKey4 --upload-id ${uploadID}    0
+
+Test abort Multipart upload with invalid uploadId
+    ${result} =         Execute AWSS3APICli and checkrc    abort-multipart-upload --bucket ${BUCKET} --key multipartKey5 --upload-id "random"    255
 
 Upload part with Incorrect uploadID
 	                    Execute                 echo "Multipart upload" > /tmp/testfile

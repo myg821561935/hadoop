@@ -23,6 +23,7 @@ import com.google.protobuf.RpcController;
 import com.google.protobuf.ServiceException;
 import java.util.ArrayList;
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.ipc.ProtobufHelper;
 import org.apache.hadoop.ipc.ProtocolTranslator;
 import org.apache.hadoop.ozone.om.helpers.OmBucketArgs;
@@ -36,8 +37,10 @@ import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadList;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
+import org.apache.hadoop.ozone.om.helpers.S3SecretValue;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
 import org.apache.hadoop.ozone.om.protocol.OzoneManagerProtocol;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos;
 import org.apache.hadoop.ozone.protocol.proto
     .OzoneManagerProtocolProtos.AllocateBlockRequest;
 import org.apache.hadoop.ozone.protocol.proto
@@ -159,6 +162,10 @@ import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .S3ListBucketsResponse;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .GetS3SecretRequest;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .GetS3SecretResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .OMRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .OMResponse;
@@ -168,6 +175,18 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.apache.hadoop.ozone.protocolPB.OMPBHelper;
+import org.apache.hadoop.ozone.security.OzoneTokenIdentifier;
+import org.apache.hadoop.security.proto.SecurityProtos.GetDelegationTokenRequestProto;
+import org.apache.hadoop.ozone.protocol.proto
+    .OzoneManagerProtocolProtos.GetDelegationTokenResponseProto;
+import org.apache.hadoop.security.proto.SecurityProtos.RenewDelegationTokenRequestProto;
+import org.apache.hadoop.ozone.protocol.proto
+    .OzoneManagerProtocolProtos.RenewDelegationTokenResponseProto;
+import org.apache.hadoop.security.proto.SecurityProtos.CancelDelegationTokenRequestProto;
+import org.apache.hadoop.ozone.protocol.proto
+    .OzoneManagerProtocolProtos.CancelDelegationTokenResponseProto;
+import org.apache.hadoop.security.token.Token;
 
 /**
  *  The client side implementation of OzoneManagerProtocol.
@@ -951,6 +970,30 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
   }
 
   @Override
+  public S3SecretValue getS3Secret(String kerberosID) throws IOException {
+    GetS3SecretRequest request = GetS3SecretRequest.newBuilder()
+        .setKerberosID(kerberosID)
+        .build();
+    OMRequest omRequest = createOMRequest(Type.GetS3Secret)
+        .setGetS3SecretRequest(request)
+        .build();
+    final GetS3SecretResponse resp = submitRequest(omRequest)
+        .getGetS3SecretResponse();
+
+    if(resp.getStatus() != Status.OK) {
+      throw new IOException("Fetch S3 Secret failed, error: " +
+          resp.getStatus());
+    } else {
+      return S3SecretValue.fromProtobuf(resp.getS3Secret());
+    }
+  }
+
+  /**
+   * Return the proxy object underlying this protocol translator.
+   *
+   * @return the proxy object underlying this protocol translator.
+   */
+  @Override
   public OmMultipartInfo initiateMultipartUpload(OmKeyArgs omKeyArgs) throws
       IOException {
 
@@ -1105,6 +1148,92 @@ public final class OzoneManagerProtocolClientSideTranslatorPB
     } else {
       throw new IOException("Getting service list failed, error: "
           + resp.getStatus());
+    }
+  }
+
+  /**
+   * Get a valid Delegation Token.
+   *
+   * @param renewer the designated renewer for the token
+   * @return Token<OzoneDelegationTokenSelector>
+   * @throws IOException
+   */
+  @Override
+  public Token<OzoneTokenIdentifier> getDelegationToken(Text renewer)
+      throws IOException {
+    GetDelegationTokenRequestProto req = GetDelegationTokenRequestProto
+        .newBuilder()
+        .setRenewer(renewer == null ? "" : renewer.toString())
+        .build();
+
+    OMRequest omRequest = createOMRequest(Type.GetDelegationToken)
+        .setGetDelegationTokenRequest(req)
+        .build();
+
+    final GetDelegationTokenResponseProto resp = submitRequest(omRequest)
+        .getGetDelegationTokenResponse();
+    if (resp.getStatus() == Status.OK) {
+       return resp.getResponse().hasToken() ?
+          OMPBHelper.convertToDelegationToken(resp.getResponse().getToken())
+           : null;
+    }  else {
+      throw new IOException("Get Delegation Token failed, error : " + resp
+          .getStatus());
+    }
+  }
+
+  /**
+   * Renew an existing delegation token.
+   *
+   * @param token delegation token obtained earlier
+   * @return the new expiration time
+   * @throws IOException
+   */
+  @Override
+  public long renewDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    RenewDelegationTokenRequestProto req =
+        RenewDelegationTokenRequestProto.newBuilder().
+            setToken(OMPBHelper.convertToTokenProto(token)).
+            build();
+
+    OMRequest omRequest = createOMRequest(Type.RenewDelegationToken)
+        .setRenewDelegationTokenRequest(req)
+        .build();
+
+    final RenewDelegationTokenResponseProto resp = submitRequest(omRequest)
+        .getRenewDelegationTokenResponse();
+    if (resp.getStatus() == Status.OK) {
+      return resp.getResponse().getNewExpiryTime();
+    }  else {
+      throw new IOException("Renew Delegation Token failed, error : " + resp
+          .getStatus());
+    }
+  }
+
+  /**
+   * Cancel an existing delegation token.
+   *
+   * @param token delegation token
+   * @throws IOException
+   */
+  @Override
+  public void cancelDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    CancelDelegationTokenRequestProto req = CancelDelegationTokenRequestProto
+        .newBuilder()
+        .setToken(OMPBHelper.convertToTokenProto(token))
+        .build();
+
+    OMRequest omRequest = createOMRequest(Type.CancelDelegationToken)
+        .setCancelDelegationTokenRequest(req)
+        .build();
+
+    final CancelDelegationTokenResponseProto resp = submitRequest(omRequest)
+        .getCancelDelegationTokenResponse();
+    if (resp.getStatus() != Status.OK) {
+      throw new IOException("Cancel Delegation Token failed, error : " + resp
+          .getStatus());
     }
   }
 }

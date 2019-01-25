@@ -100,6 +100,7 @@ public class YarnConfiguration extends Configuration {
     addDeprecatedKeys();
     Configuration.addDefaultResource(YARN_DEFAULT_CONFIGURATION_FILE);
     Configuration.addDefaultResource(YARN_SITE_CONFIGURATION_FILE);
+    Configuration.addDefaultResource(RESOURCE_TYPES_CONFIGURATION_FILE);
   }
 
   private static void addDeprecatedKeys() {
@@ -2696,6 +2697,13 @@ public class YarnConfiguration extends Configuration {
   public static final String DEFAULT_TIMELINE_SERVICE_READER_CLASS =
       "org.apache.hadoop.yarn.server.timelineservice.storage" +
           ".HBaseTimelineReaderImpl";
+
+  public static final String TIMELINE_SERVICE_SCHEMA_CREATOR_CLASS =
+      TIMELINE_SERVICE_PREFIX + "schema-creator.class";
+
+  public static final String DEFAULT_TIMELINE_SERVICE_SCHEMA_CREATOR_CLASS =
+      "org.apache.hadoop.yarn.server.timelineservice.storage" +
+          ".HBaseTimelineSchemaCreator";
 
   /**
    * default schema prefix for hbase tables.

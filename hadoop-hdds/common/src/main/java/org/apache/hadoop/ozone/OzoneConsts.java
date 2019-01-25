@@ -19,6 +19,11 @@
 package org.apache.hadoop.ozone;
 
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.ratis.thirdparty.io.grpc.Context;
+import org.apache.ratis.thirdparty.io.grpc.Metadata;
+
+import static org.apache.ratis.thirdparty.io.grpc.Metadata.ASCII_STRING_MARSHALLER;
 
 /**
  * Set of constants used in Ozone implementation.
@@ -90,6 +95,7 @@ public final class OzoneConsts {
   public static final String CONTAINER_ROOT_PREFIX = "repository";
 
   public static final String FILE_HASH = "SHA-256";
+  public static final String MD5_HASH = "MD5";
   public final static String CHUNK_OVERWRITE = "OverWriteRequested";
 
   public static final int CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB
@@ -108,6 +114,7 @@ public final class OzoneConsts {
   public static final String DN_CONTAINER_DB = "-dn-"+ CONTAINER_DB_SUFFIX;
   public static final String DELETED_BLOCK_DB = "deletedBlock.db";
   public static final String OM_DB_NAME = "om.db";
+  public static final String OZONE_MANAGER_TOKEN_DB_NAME = "om-token.db";
 
   public static final String STORAGE_DIR_CHUNKS = "chunks";
 
@@ -247,4 +254,13 @@ public final class OzoneConsts {
   // For Multipart upload
   public static final int OM_MULTIPART_MIN_SIZE = 5 * 1024 * 1024;
 
+  // GRPC block token metadata header and context key
+  public static final String OZONE_BLOCK_TOKEN = "blocktoken";
+  public static final Context.Key<UserGroupInformation> UGI_CTX_KEY =
+      Context.key("UGI");
+
+  public static final Metadata.Key<String> OBT_METADATA_KEY =
+      Metadata.Key.of(OZONE_BLOCK_TOKEN, ASCII_STRING_MARSHALLER);
+  public static final Metadata.Key<String> USER_METADATA_KEY =
+      Metadata.Key.of(OZONE_USER, ASCII_STRING_MARSHALLER);
 }

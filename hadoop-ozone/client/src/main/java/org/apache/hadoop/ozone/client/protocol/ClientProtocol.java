@@ -19,6 +19,8 @@
 package org.apache.hadoop.ozone.client.protocol;
 
 import org.apache.hadoop.hdds.protocol.StorageType;
+import org.apache.hadoop.hdds.scm.ScmConfigKeys;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.ozone.OzoneAcl;
 import org.apache.hadoop.ozone.client.*;
 import org.apache.hadoop.hdds.client.OzoneQuota;
@@ -33,6 +35,11 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.hadoop.ozone.om.helpers.S3SecretValue;
+import org.apache.hadoop.ozone.security.OzoneTokenIdentifier;
+import org.apache.hadoop.security.KerberosInfo;
+import org.apache.hadoop.security.token.Token;
+
 /**
  * An implementer of this interface is capable of connecting to Ozone Cluster
  * and perform client operations. The protocol used for communication is
@@ -41,6 +48,7 @@ import java.util.Map;
  * includes: {@link org.apache.hadoop.ozone.client.rpc.RpcClient} for RPC and
  * {@link  org.apache.hadoop.ozone.client.rest.RestClient} for REST.
  */
+@KerberosInfo(serverPrincipal = ScmConfigKeys.HDDS_SCM_KERBEROS_PRINCIPAL_KEY)
 public interface ClientProtocol {
 
   /**
@@ -388,7 +396,6 @@ public interface ClientProtocol {
    */
   void close() throws IOException;
 
-
   /**
    * Initiate Multipart upload.
    * @param volumeName
@@ -445,4 +452,40 @@ public interface ClientProtocol {
   void abortMultipartUpload(String volumeName,
       String bucketName, String keyName, String uploadID) throws IOException;
 
+  /**
+   * Get a valid Delegation Token.
+   *
+   * @param renewer the designated renewer for the token
+   * @return Token<OzoneDelegationTokenSelector>
+   * @throws IOException
+   */
+  Token<OzoneTokenIdentifier> getDelegationToken(Text renewer)
+      throws IOException;
+
+  /**
+   * Renew an existing delegation token.
+   *
+   * @param token delegation token obtained earlier
+   * @return the new expiration time
+   * @throws IOException
+   */
+  long renewDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException;
+
+  /**
+   * Cancel an existing delegation token.
+   *
+   * @param token delegation token
+   * @throws IOException
+   */
+  void cancelDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException;
+
+  /**
+   * returns S3 Secret given kerberos user.
+   * @param kerberosID
+   * @return S3SecretValue
+   * @throws IOException
+   */
+  S3SecretValue getS3Secret(String kerberosID) throws IOException;
 }

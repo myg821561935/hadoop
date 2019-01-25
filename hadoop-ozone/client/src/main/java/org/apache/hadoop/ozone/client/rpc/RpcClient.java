@@ -54,6 +54,7 @@ import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadList;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
+import org.apache.hadoop.ozone.om.helpers.S3SecretValue;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
 import org.apache.hadoop.ozone.om.protocolPB.OzoneManagerProtocolClientSideTranslatorPB;
 import org.apache.hadoop.ozone.om.protocolPB.OzoneManagerProtocolPB;
@@ -70,12 +71,16 @@ import org.apache.hadoop.hdds.scm.protocolPB
     .StorageContainerLocationProtocolClientSideTranslatorPB;
 import org.apache.hadoop.hdds.scm.protocolPB
     .StorageContainerLocationProtocolPB;
+import org.apache.hadoop.ozone.security.OzoneTokenIdentifier;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.security.token.Token;
+import org.apache.hadoop.io.Text;
 import org.apache.logging.log4j.util.Strings;
 import org.apache.ratis.protocol.ClientId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.ws.rs.HEAD;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.*;
@@ -131,8 +136,7 @@ public class RpcClient implements ClientProtocol {
     this.ozoneManagerClient =
         new OzoneManagerProtocolClientSideTranslatorPB(
             RPC.getProxy(OzoneManagerProtocolPB.class, omVersion,
-                omAddress, UserGroupInformation.getCurrentUser(), conf,
-                NetUtils.getDefaultSocketFactory(conf),
+                omAddress, ugi, conf, NetUtils.getDefaultSocketFactory(conf),
                 Client.getRpcTimeout(conf)), clientId.toString());
 
     long scmVersion =
@@ -143,8 +147,7 @@ public class RpcClient implements ClientProtocol {
     this.storageContainerLocationClient =
         new StorageContainerLocationProtocolClientSideTranslatorPB(
             RPC.getProxy(StorageContainerLocationProtocolPB.class, scmVersion,
-                scmAddress, UserGroupInformation.getCurrentUser(), conf,
-                NetUtils.getDefaultSocketFactory(conf),
+                scmAddress, ugi, conf, NetUtils.getDefaultSocketFactory(conf),
                 Client.getRpcTimeout(conf)));
 
     this.xceiverClientManager = new XceiverClientManager(conf);
@@ -410,6 +413,58 @@ public class RpcClient implements ClientProtocol {
         .setBucketName(bucketName)
         .setRemoveAcls(removeAcls);
     ozoneManagerClient.setBucketProperty(builder.build());
+  }
+
+  /**
+   * Get a valid Delegation Token.
+   *
+   * @param renewer the designated renewer for the token
+   * @return Token<OzoneDelegationTokenSelector>
+   * @throws IOException
+   */
+  @Override
+  public Token<OzoneTokenIdentifier> getDelegationToken(Text renewer)
+      throws IOException {
+    return ozoneManagerClient.getDelegationToken(renewer);
+  }
+
+  /**
+   * Renew an existing delegation token.
+   *
+   * @param token delegation token obtained earlier
+   * @return the new expiration time
+   * @throws IOException
+   */
+  @Override
+  public long renewDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    return ozoneManagerClient.renewDelegationToken(token);
+  }
+
+  /**
+   * Cancel an existing delegation token.
+   *
+   * @param token delegation token
+   * @throws IOException
+   */
+  @Override
+  public void cancelDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    ozoneManagerClient.cancelDelegationToken(token);
+  }
+
+  /**
+   * Returns s3 secret given a kerberos user.
+   * @param kerberosID
+   * @return S3SecretValue
+   * @throws IOException
+   */
+  @Override
+  public S3SecretValue getS3Secret(String kerberosID) throws IOException {
+    Preconditions.checkArgument(Strings.isNotBlank(kerberosID),
+        "kerberosID cannot be null or empty.");
+
+    return ozoneManagerClient.getS3Secret(kerberosID);
   }
 
   @Override

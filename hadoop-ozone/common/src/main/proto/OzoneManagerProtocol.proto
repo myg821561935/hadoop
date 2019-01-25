@@ -36,6 +36,7 @@ This is similar to Namenode for Ozone.
 */
 
 import "hdds.proto";
+import "Security.proto";
 
 enum Type {
   CreateVolume = 11;
@@ -67,8 +68,13 @@ enum Type {
   CommitMultiPartUpload = 46;
   CompleteMultiPartUpload = 47;
   AbortMultiPartUpload = 48;
+  GetS3Secret = 49;
 
   ServiceList = 51;
+
+  GetDelegationToken = 61;
+  RenewDelegationToken = 62;
+  CancelDelegationToken = 63;
 }
 
 message OMRequest {
@@ -109,8 +115,14 @@ message OMRequest {
   optional MultipartCommitUploadPartRequest commitMultiPartUploadRequest   = 46;
   optional MultipartUploadCompleteRequest   completeMultiPartUploadRequest = 47;
   optional MultipartUploadAbortRequest      abortMultiPartUploadRequest    = 48;
+  optional GetS3SecretRequest               getS3SecretRequest             = 49;
 
   optional ServiceListRequest               serviceListRequest             = 51;
+
+  optional hadoop.common.GetDelegationTokenRequestProto getDelegationTokenRequest = 61;
+  optional hadoop.common.RenewDelegationTokenRequestProto renewDelegationTokenRequest= 62;
+  optional hadoop.common.CancelDelegationTokenRequestProto cancelDelegationTokenRequest = 63;
+
 }
 
 message OMResponse {
@@ -152,8 +164,13 @@ message OMResponse {
   optional MultipartCommitUploadPartResponse commitMultiPartUploadResponse = 46;
   optional MultipartUploadCompleteResponse completeMultiPartUploadResponse = 47;
   optional MultipartUploadAbortResponse    abortMultiPartUploadResponse    = 48;
+  optional GetS3SecretResponse               getS3SecretResponse           = 49;
 
   optional ServiceListResponse               ServiceListResponse           = 51;
+
+  optional GetDelegationTokenResponseProto getDelegationTokenResponse = 61;
+  optional RenewDelegationTokenResponseProto renewDelegationTokenResponse = 62;
+  optional CancelDelegationTokenResponseProto cancelDelegationTokenResponse = 63;
 }
 
 enum Status {
@@ -180,6 +197,7 @@ enum Status {
     SCM_VERSION_MISMATCH_ERROR = 21;
     S3_BUCKET_NOT_FOUND = 22;
     S3_BUCKET_ALREADY_EXISTS = 23;
+
     INITIATE_MULTIPART_UPLOAD_ERROR = 24;
     MULTIPART_UPLOAD_PARTFILE_ERROR = 25;
     NO_SUCH_MULTIPART_UPLOAD_ERROR = 26;
@@ -188,6 +206,8 @@ enum Status {
     COMPLETE_MULTIPART_UPLOAD_ERROR = 29;
     ENTITY_TOO_SMALL = 30;
     ABORT_MULTIPART_UPLOAD_FAILED = 31;
+
+    S3_SECRET_NOT_FOUND = 32;
 }
 
 
@@ -397,6 +417,7 @@ message KeyLocation {
     required uint64 length = 4;
     // indicated at which version this block gets created.
     optional uint64 createVersion = 5;
+    optional hadoop.common.TokenProto token = 6;
 }
 
 message KeyLocationList {
@@ -464,6 +485,25 @@ message DeleteKeyResponse {
     // (similar to a cookie).
     optional uint64 ID = 3;
     optional uint64 openVersion = 4;
+}
+
+message OMTokenProto {
+    optional uint32 version        = 1;
+    optional string owner          = 2;
+    optional string renewer        = 3;
+    optional string realUser       = 4;
+    optional uint64 issueDate      = 5;
+    optional uint64 maxDate        = 6;
+    optional uint32 sequenceNumber = 7;
+    optional uint32 masterKeyId    = 8;
+    optional uint64 expiryDate     = 9;
+}
+
+message SecretKeyProto {
+    required uint32 keyId = 1;
+    required uint64 expiryDate = 2;
+    required bytes privateKeyBytes = 3;
+    required bytes publicKeyBytes = 4;
 }
 
 message ListKeysRequest {
@@ -618,6 +658,35 @@ message MultipartUploadAbortRequest {
 
 message MultipartUploadAbortResponse {
     required Status status = 1;
+}
+
+message GetDelegationTokenResponseProto{
+    required Status status = 1;
+    optional hadoop.common.GetDelegationTokenResponseProto response = 2;
+}
+
+message RenewDelegationTokenResponseProto{
+    required Status status = 1;
+    optional hadoop.common.RenewDelegationTokenResponseProto response = 2;
+}
+
+message CancelDelegationTokenResponseProto {
+    required Status status = 1;
+    optional hadoop.common.CancelDelegationTokenResponseProto response = 2;
+}
+
+message S3Secret {
+    required string kerberosID = 1;
+    required string awsSecret = 2;
+}
+
+message GetS3SecretRequest {
+    required string kerberosID = 1;
+}
+
+message GetS3SecretResponse {
+    required Status status = 1;
+    required S3Secret s3Secret = 2;
 }
 
 /**

@@ -18,10 +18,15 @@
 package org.apache.hadoop.ozone;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
 import java.util.Optional;
 
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.server.ServerUtils;
@@ -54,14 +59,21 @@ public final class OmUtils {
    * @param conf
    * @return Target InetSocketAddress for the SCM service endpoint.
    */
-  public static InetSocketAddress getOmAddress(
-      Configuration conf) {
+  public static InetSocketAddress getOmAddress(Configuration conf) {
+    return NetUtils.createSocketAddr(getOmRpcAddress(conf));
+  }
+
+  /**
+   * Retrieve the socket address that is used by OM.
+   * @param conf
+   * @return Target InetSocketAddress for the SCM service endpoint.
+   */
+  public static String getOmRpcAddress(Configuration conf) {
     final Optional<String> host = getHostNameFromConfigKeys(conf,
         OZONE_OM_ADDRESS_KEY);
 
-    return NetUtils.createSocketAddr(
-        host.orElse(OZONE_OM_BIND_HOST_DEFAULT) + ":" +
-            getOmRpcPort(conf));
+    return host.orElse(OZONE_OM_BIND_HOST_DEFAULT) + ":" +
+        getOmRpcPort(conf);
   }
 
   /**
@@ -143,38 +155,63 @@ public final class OmUtils {
       OzoneManagerProtocolProtos.OMRequest omRequest) {
     OzoneManagerProtocolProtos.Type cmdType = omRequest.getCmdType();
     switch (cmdType) {
-    case CheckVolumeAccess:
-    case InfoVolume:
-    case ListVolume:
-    case InfoBucket:
-    case ListBuckets:
-    case LookupKey:
-    case ListKeys:
-    case InfoS3Bucket:
-    case ListS3Buckets:
-    case ServiceList:
-      return true;
-    case CreateVolume:
-    case SetVolumeProperty:
-    case DeleteVolume:
-    case CreateBucket:
-    case SetBucketProperty:
-    case DeleteBucket:
-    case CreateKey:
-    case RenameKey:
-    case DeleteKey:
-    case CommitKey:
-    case AllocateBlock:
-    case CreateS3Bucket:
-    case DeleteS3Bucket:
-    case InitiateMultiPartUpload:
-    case CommitMultiPartUpload:
-    case CompleteMultiPartUpload:
-    case AbortMultiPartUpload:
-      return false;
-    default:
-      LOG.error("CmdType {} is not categorized as readOnly or not.", cmdType);
-      return false;
+      case CheckVolumeAccess:
+      case InfoVolume:
+      case ListVolume:
+      case InfoBucket:
+      case ListBuckets:
+      case LookupKey:
+      case ListKeys:
+      case InfoS3Bucket:
+      case ListS3Buckets:
+      case ServiceList:
+        return true;
+      case CreateVolume:
+      case SetVolumeProperty:
+      case DeleteVolume:
+      case CreateBucket:
+      case SetBucketProperty:
+      case DeleteBucket:
+      case CreateKey:
+      case RenameKey:
+      case DeleteKey:
+      case CommitKey:
+      case AllocateBlock:
+      case CreateS3Bucket:
+      case DeleteS3Bucket:
+      case InitiateMultiPartUpload:
+      case CommitMultiPartUpload:
+      case CompleteMultiPartUpload:
+      case AbortMultiPartUpload:
+      case GetS3Secret:
+      case GetDelegationToken:
+      case RenewDelegationToken:
+      case CancelDelegationToken:
+        return false;
+      default:
+        LOG.error("CmdType {} is not categorized as readOnly or not.", cmdType);
+        return false;
+    }
+  }
+
+  public static byte[] getMD5Digest(String input) throws IOException {
+    try {
+      MessageDigest md = MessageDigest.getInstance(OzoneConsts.MD5_HASH);
+      return md.digest(input.getBytes(StandardCharsets.UTF_8));
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IOException("Error creating an instance of MD5 digest.\n" +
+          "This could possibly indicate a faulty JRE");
+    }
+  }
+
+  public static byte[] getSHADigest() throws IOException {
+    try {
+      MessageDigest sha = MessageDigest.getInstance(OzoneConsts.FILE_HASH);
+      return sha.digest(RandomStringUtils.random(32)
+          .getBytes(StandardCharsets.UTF_8));
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IOException("Error creating an instance of SHA-256 digest.\n" +
+          "This could possibly indicate a faulty JRE");
     }
   }
 }

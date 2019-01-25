@@ -175,4 +175,26 @@ public final class OMConfigKeys {
   public static final TimeDuration
       OZONE_OM_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_DEFAULT =
       TimeDuration.valueOf(1, TimeUnit.SECONDS);
+
+  public static final String OZONE_OM_KERBEROS_KEYTAB_FILE_KEY = "ozone.om."
+      + "kerberos.keytab.file";
+  public static final String OZONE_OM_KERBEROS_PRINCIPAL_KEY = "ozone.om"
+      + ".kerberos.principal";
+  public static final String OZONE_OM_HTTP_KERBEROS_KEYTAB_FILE =
+      "ozone.om.http.kerberos.keytab.file";
+  public static final String OZONE_OM_HTTP_KERBEROS_PRINCIPAL_KEY
+      = "ozone.om.http.kerberos.principal";
+  // Delegation token related keys
+  public static final String  DELEGATION_REMOVER_SCAN_INTERVAL_KEY =
+      "ozone.manager.delegation.remover.scan.interval";
+  public static final long    DELEGATION_REMOVER_SCAN_INTERVAL_DEFAULT =
+      60*60*1000;
+  public static final String  DELEGATION_TOKEN_RENEW_INTERVAL_KEY =
+      "ozone.manager.delegation.token.renew-interval";
+  public static final long    DELEGATION_TOKEN_RENEW_INTERVAL_DEFAULT =
+      24*60*60*1000;  // 1 day = 86400000 ms
+  public static final String  DELEGATION_TOKEN_MAX_LIFETIME_KEY =
+      "ozone.manager.delegation.token.max-lifetime";
+  public static final long    DELEGATION_TOKEN_MAX_LIFETIME_DEFAULT =
+      7*24*60*60*1000; // 7 days
 }
