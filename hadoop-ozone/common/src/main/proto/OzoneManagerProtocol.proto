@@ -69,6 +69,7 @@ enum Type {
   CompleteMultiPartUpload = 47;
   AbortMultiPartUpload = 48;
   GetS3Secret = 49;
+  ListMultiPartUploadParts = 50;
 
   ServiceList = 51;
 
@@ -116,6 +117,7 @@ message OMRequest {
   optional MultipartUploadCompleteRequest   completeMultiPartUploadRequest = 47;
   optional MultipartUploadAbortRequest      abortMultiPartUploadRequest    = 48;
   optional GetS3SecretRequest               getS3SecretRequest             = 49;
+  optional MultipartUploadListPartsRequest  listMultipartUploadPartsRequest = 50;
 
   optional ServiceListRequest               serviceListRequest             = 51;
 
@@ -165,6 +167,7 @@ message OMResponse {
   optional MultipartUploadCompleteResponse completeMultiPartUploadResponse = 47;
   optional MultipartUploadAbortResponse    abortMultiPartUploadResponse    = 48;
   optional GetS3SecretResponse               getS3SecretResponse           = 49;
+  optional MultipartUploadListPartsResponse listMultipartUploadPartsResponse = 50;
 
   optional ServiceListResponse               ServiceListResponse           = 51;
 
@@ -208,6 +211,13 @@ enum Status {
     ABORT_MULTIPART_UPLOAD_FAILED = 31;
 
     S3_SECRET_NOT_FOUND = 32;
+
+    INVALID_AUTH_METHOD = 33;
+    INVALID_TOKEN = 34;
+    TOKEN_EXPIRED = 35;
+    TOKEN_ERROR_OTHER = 36;
+    LIST_MULTIPART_UPLOAD_PARTS_FAILED = 37;
+
 }
 
 
@@ -317,6 +327,8 @@ message BucketInfo {
     required bool isVersionEnabled = 4 [default = false];
     required StorageTypeProto storageType = 5 [default = DISK];
     required uint64 creationTime = 6;
+    repeated hadoop.hdds.KeyValue metadata = 7;
+
 }
 
 enum StorageTypeProto {
@@ -333,6 +345,7 @@ message BucketArgs {
     repeated OzoneAclInfo removeAcls = 4;
     optional bool isVersionEnabled = 5;
     optional StorageTypeProto storageType = 6;
+    repeated hadoop.hdds.KeyValue metadata = 7;
 }
 
 message OzoneAclInfo {
@@ -409,6 +422,7 @@ message KeyArgs {
     optional bool isMultipartKey = 8;
     optional string multipartUploadID = 9;
     optional uint32 multipartNumber = 10;
+    repeated hadoop.hdds.KeyValue metadata = 11;
 }
 
 message KeyLocation {
@@ -436,6 +450,8 @@ message KeyInfo {
     required uint64 creationTime = 8;
     required uint64 modificationTime = 9;
     optional uint64 latestVersion = 10;
+    repeated hadoop.hdds.KeyValue metadata = 11;
+
 }
 
 message CreateKeyRequest {
@@ -658,6 +674,30 @@ message MultipartUploadAbortRequest {
 
 message MultipartUploadAbortResponse {
     required Status status = 1;
+}
+message MultipartUploadListPartsRequest {
+    required string volume = 1;
+    required string bucket = 2;
+    required string key = 3;
+    required string uploadID = 4;
+    optional uint32 partNumbermarker = 5;
+    optional uint32 maxParts = 6;
+}
+
+message MultipartUploadListPartsResponse {
+    required Status status = 1;
+    optional hadoop.hdds.ReplicationType type = 2;
+    optional uint32 nextPartNumberMarker = 3;
+    optional bool isTruncated = 4;
+    repeated PartInfo partsList = 5;
+
+}
+
+message PartInfo {
+    required uint32 partNumber = 1;
+    required string partName = 2;
+    required uint64 modificationTime = 3;
+    required uint64 size = 4;
 }
 
 message GetDelegationTokenResponseProto{

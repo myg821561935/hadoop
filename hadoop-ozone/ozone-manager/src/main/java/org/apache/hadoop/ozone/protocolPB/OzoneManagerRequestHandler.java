@@ -19,6 +19,7 @@ package org.apache.hadoop.ozone.protocolPB;
 
 import com.google.common.collect.Lists;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -35,6 +36,8 @@ import org.apache.hadoop.ozone.om.helpers.OmMultipartCommitUploadPartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadList;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadListParts;
+import org.apache.hadoop.ozone.om.helpers.OmPartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
 import org.apache.hadoop.ozone.om.helpers.ServiceInfo;
@@ -119,6 +122,10 @@ import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .MultipartUploadCompleteResponse;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartUploadListPartsRequest;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
+    .MultipartUploadListPartsResponse;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .OMRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos
     .OMResponse;
@@ -163,7 +170,6 @@ import org.apache.hadoop.security.proto.SecurityProtos.GetDelegationTokenRequest
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.GetDelegationTokenResponseProto;
 import org.apache.hadoop.security.proto.SecurityProtos.RenewDelegationTokenRequestProto;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.RenewDelegationTokenResponseProto;
-import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.GetS3SecretRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.GetS3SecretResponse;
 import org.apache.hadoop.security.token.Token;
 
@@ -326,6 +332,11 @@ public class OzoneManagerRequestHandler {
       responseBuilder.setAbortMultiPartUploadResponse(
           abortMultiPartAbortResponse);
       break;
+    case ListMultiPartUploadParts:
+      MultipartUploadListPartsResponse listPartsResponse =
+          listParts(request.getListMultipartUploadPartsRequest());
+      responseBuilder.setListMultipartUploadPartsResponse(listPartsResponse);
+      break;
     case ServiceList:
       ServiceListResponse serviceListResponse = getServiceList(
           request.getServiceListRequest());
@@ -418,6 +429,16 @@ public class OzoneManagerRequestHandler {
         return Status.ENTITY_TOO_SMALL;
       case ABORT_MULTIPART_UPLOAD_FAILED:
         return Status.ABORT_MULTIPART_UPLOAD_FAILED;
+      case LIST_MULTIPART_UPLOAD_PARTS_FAILED:
+        return Status.LIST_MULTIPART_UPLOAD_PARTS_FAILED;
+      case INVALID_AUTH_METHOD:
+        return Status.INVALID_AUTH_METHOD;
+      case INVALID_TOKEN:
+        return Status.INVALID_TOKEN;
+      case TOKEN_EXPIRED:
+        return Status.TOKEN_EXPIRED;
+      case TOKEN_ERROR_OTHER:
+        return Status.TOKEN_ERROR_OTHER;
       default:
         return Status.INTERNAL_ERROR;
       }
@@ -950,6 +971,44 @@ public class OzoneManagerRequestHandler {
     return response.build();
   }
 
+  private MultipartUploadListPartsResponse listParts(
+      MultipartUploadListPartsRequest multipartUploadListPartsRequest) {
+
+    MultipartUploadListPartsResponse.Builder response =
+        MultipartUploadListPartsResponse.newBuilder();
+
+    try {
+      OmMultipartUploadListParts omMultipartUploadListParts =
+          impl.listParts(multipartUploadListPartsRequest.getVolume(),
+              multipartUploadListPartsRequest.getBucket(),
+              multipartUploadListPartsRequest.getKey(),
+              multipartUploadListPartsRequest.getUploadID(),
+              multipartUploadListPartsRequest.getPartNumbermarker(),
+              multipartUploadListPartsRequest.getMaxParts());
+
+      List<OmPartInfo> omPartInfoList =
+          omMultipartUploadListParts.getPartInfoList();
+
+      List<OzoneManagerProtocolProtos.PartInfo> partInfoList =
+          new ArrayList<>();
+
+      omPartInfoList.forEach(partInfo -> partInfoList.add(partInfo.getProto()));
+
+      response.setType(omMultipartUploadListParts.getReplicationType());
+      response.setNextPartNumberMarker(
+          omMultipartUploadListParts.getNextPartNumberMarker());
+      response.setIsTruncated(omMultipartUploadListParts.isTruncated());
+      response.setStatus(Status.OK);
+      return response.addAllPartsList(partInfoList).build();
+
+    } catch (IOException ex) {
+      response.setStatus(exceptionToResponseStatus(ex));
+    }
+
+    return response.build();
+
+  }
+
   private GetDelegationTokenResponseProto getDelegationToken(
       GetDelegationTokenRequestProto request){
     GetDelegationTokenResponseProto.Builder rb =
@@ -963,7 +1022,7 @@ public class OzoneManagerRequestHandler {
                 .convertToTokenProto(token)).build());
       }
       rb.setStatus(Status.OK);
-      } catch (IOException ex) {
+    } catch (IOException ex) {
       rb.setStatus(exceptionToResponseStatus(ex));
     }
     return rb.build();

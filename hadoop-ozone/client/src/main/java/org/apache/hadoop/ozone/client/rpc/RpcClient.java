@@ -52,6 +52,8 @@ import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadList;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadListParts;
+import org.apache.hadoop.ozone.om.helpers.OmPartInfo;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.helpers.OpenKeySession;
 import org.apache.hadoop.ozone.om.helpers.S3SecretValue;
@@ -80,7 +82,6 @@ import org.apache.ratis.protocol.ClientId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.ws.rs.HEAD;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.*;
@@ -206,8 +207,8 @@ public class RpcClient implements ClientProtocol {
     ServiceInfo scmInfo = services.stream().filter(
         a -> a.getNodeType().equals(HddsProtos.NodeType.SCM))
         .collect(Collectors.toList()).get(0);
-    return NetUtils.createSocketAddr(scmInfo.getHostname()+ ":" +
-        scmInfo.getPort(ServicePort.Type.RPC));
+    return NetUtils.createSocketAddr(
+        scmInfo.getServiceAddress(ServicePort.Type.RPC));
   }
 
   @Override
@@ -247,6 +248,7 @@ public class RpcClient implements ClientProtocol {
     builder.setAdminName(admin);
     builder.setOwnerName(owner);
     builder.setQuotaInBytes(quota);
+    builder.addAllMetadata(volArgs.getMetadata());
 
     //Remove duplicates and add ACLs
     for (OzoneAcl ozoneAcl :
@@ -290,7 +292,8 @@ public class RpcClient implements ClientProtocol {
         volume.getQuotaInBytes(),
         volume.getCreationTime(),
         volume.getAclMap().ozoneAclGetProtobuf().stream().
-            map(OMPBHelper::convertOzoneAcl).collect(Collectors.toList()));
+            map(OMPBHelper::convertOzoneAcl).collect(Collectors.toList()),
+        volume.getMetadata());
   }
 
   @Override
@@ -341,7 +344,8 @@ public class RpcClient implements ClientProtocol {
         volume.getQuotaInBytes(),
         volume.getCreationTime(),
         volume.getAclMap().ozoneAclGetProtobuf().stream().
-            map(OMPBHelper::convertOzoneAcl).collect(Collectors.toList())))
+            map(OMPBHelper::convertOzoneAcl).collect(Collectors.toList()),
+        volume.getMetadata()))
         .collect(Collectors.toList());
   }
 
@@ -380,6 +384,7 @@ public class RpcClient implements ClientProtocol {
     builder.setVolumeName(volumeName)
         .setBucketName(bucketName)
         .setIsVersionEnabled(isVersionEnabled)
+        .addAllMetadata(bucketArgs.getMetadata())
         .setStorageType(storageType)
         .setAcls(listOfAcls.stream().distinct().collect(Collectors.toList()));
 
@@ -510,17 +515,18 @@ public class RpcClient implements ClientProtocol {
   public OzoneBucket getBucketDetails(
       String volumeName, String bucketName) throws IOException {
     HddsClientUtils.verifyResourceName(volumeName, bucketName);
-    OmBucketInfo bucketArgs =
+    OmBucketInfo bucketInfo =
         ozoneManagerClient.getBucketInfo(volumeName, bucketName);
     return new OzoneBucket(
         conf,
         this,
-        bucketArgs.getVolumeName(),
-        bucketArgs.getBucketName(),
-        bucketArgs.getAcls(),
-        bucketArgs.getStorageType(),
-        bucketArgs.getIsVersionEnabled(),
-        bucketArgs.getCreationTime());
+        bucketInfo.getVolumeName(),
+        bucketInfo.getBucketName(),
+        bucketInfo.getAcls(),
+        bucketInfo.getStorageType(),
+        bucketInfo.getIsVersionEnabled(),
+        bucketInfo.getCreationTime(),
+        bucketInfo.getMetadata());
   }
 
   @Override
@@ -538,14 +544,16 @@ public class RpcClient implements ClientProtocol {
         bucket.getAcls(),
         bucket.getStorageType(),
         bucket.getIsVersionEnabled(),
-        bucket.getCreationTime()))
+        bucket.getCreationTime(),
+        bucket.getMetadata()))
         .collect(Collectors.toList());
   }
 
   @Override
   public OzoneOutputStream createKey(
       String volumeName, String bucketName, String keyName, long size,
-      ReplicationType type, ReplicationFactor factor)
+      ReplicationType type, ReplicationFactor factor,
+      Map<String, String> metadata)
       throws IOException {
     HddsClientUtils.verifyResourceName(volumeName, bucketName);
     HddsClientUtils.checkNotNull(keyName, type, factor);
@@ -557,6 +565,7 @@ public class RpcClient implements ClientProtocol {
         .setDataSize(size)
         .setType(HddsProtos.ReplicationType.valueOf(type.toString()))
         .setFactor(HddsProtos.ReplicationFactor.valueOf(factor.getValue()))
+        .addAllMetadata(metadata)
         .build();
 
     OpenKeySession openKey = ozoneManagerClient.openKey(keyArgs);
@@ -669,7 +678,7 @@ public class RpcClient implements ClientProtocol {
     return new OzoneKeyDetails(keyInfo.getVolumeName(), keyInfo.getBucketName(),
         keyInfo.getKeyName(), keyInfo.getDataSize(), keyInfo.getCreationTime(),
         keyInfo.getModificationTime(), ozoneKeyLocations, ReplicationType
-        .valueOf(keyInfo.getType().toString()));
+        .valueOf(keyInfo.getType().toString()), keyInfo.getMetadata());
   }
 
   @Override
@@ -728,7 +737,8 @@ public class RpcClient implements ClientProtocol {
         bucket.getAcls(),
         bucket.getStorageType(),
         bucket.getIsVersionEnabled(),
-        bucket.getCreationTime()))
+        bucket.getCreationTime(),
+        bucket.getMetadata()))
         .collect(Collectors.toList());
   }
 
@@ -770,8 +780,8 @@ public class RpcClient implements ClientProtocol {
       throws IOException {
     HddsClientUtils.verifyResourceName(volumeName, bucketName);
     HddsClientUtils.checkNotNull(keyName, uploadID);
-    Preconditions.checkArgument(partNumber > 0, "Part number should be " +
-        "greater than zero");
+    Preconditions.checkArgument(partNumber > 0 && partNumber <=10000, "Part " +
+        "number should be greater than zero and less than or equal to 10000");
     Preconditions.checkArgument(size >=0, "size should be greater than or " +
         "equal to zero");
     String requestId = UUID.randomUUID().toString();
@@ -848,6 +858,37 @@ public class RpcClient implements ClientProtocol {
         .setMultipartUploadID(uploadID)
         .build();
     ozoneManagerClient.abortMultipartUpload(omKeyArgs);
+  }
+
+  @Override
+  public OzoneMultipartUploadPartListParts listParts(String volumeName,
+      String bucketName, String keyName, String uploadID, int partNumberMarker,
+      int maxParts)  throws IOException {
+    HddsClientUtils.verifyResourceName(volumeName, bucketName);
+    HddsClientUtils.checkNotNull(uploadID);
+    Preconditions.checkArgument(maxParts > 0, "Max Parts Should be greater " +
+        "than zero");
+    Preconditions.checkArgument(partNumberMarker >= 0, "Part Number Marker " +
+        "Should be greater than or equal to zero, as part numbers starts from" +
+        " 1 and ranges till 10000");
+    OmMultipartUploadListParts omMultipartUploadListParts =
+        ozoneManagerClient.listParts(volumeName, bucketName, keyName,
+            uploadID, partNumberMarker, maxParts);
+
+    OzoneMultipartUploadPartListParts ozoneMultipartUploadPartListParts =
+        new OzoneMultipartUploadPartListParts(ReplicationType.valueOf(
+            omMultipartUploadListParts.getReplicationType().toString()),
+            omMultipartUploadListParts.getNextPartNumberMarker(),
+            omMultipartUploadListParts.isTruncated());
+
+    for (OmPartInfo omPartInfo : omMultipartUploadListParts.getPartInfoList()) {
+      ozoneMultipartUploadPartListParts.addPart(
+          new OzoneMultipartUploadPartListParts.PartInfo(
+              omPartInfo.getPartNumber(), omPartInfo.getPartName(),
+              omPartInfo.getModificationTime(), omPartInfo.getSize()));
+    }
+    return ozoneMultipartUploadPartListParts;
+
   }
 
 }

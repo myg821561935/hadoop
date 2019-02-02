@@ -262,12 +262,14 @@ public interface ClientProtocol {
    * @param bucketName Name of the Bucket
    * @param keyName Name of the Key
    * @param size Size of the data
+   * @param metadata custom key value metadata
    * @return {@link OzoneOutputStream}
    *
    */
   OzoneOutputStream createKey(String volumeName, String bucketName,
                               String keyName, long size, ReplicationType type,
-                              ReplicationFactor factor)
+                              ReplicationFactor factor,
+                              Map<String, String> metadata)
       throws IOException;
 
   /**
@@ -451,6 +453,22 @@ public interface ClientProtocol {
    */
   void abortMultipartUpload(String volumeName,
       String bucketName, String keyName, String uploadID) throws IOException;
+
+  /**
+   * Returns list of parts of a multipart upload key.
+   * @param volumeName
+   * @param bucketName
+   * @param keyName
+   * @param uploadID
+   * @param partNumberMarker - returns parts with part number which are greater
+   * than this partNumberMarker.
+   * @param maxParts
+   * @return OmMultipartUploadListParts
+   */
+  OzoneMultipartUploadPartListParts listParts(String volumeName,
+      String bucketName, String keyName, String uploadID, int partNumberMarker,
+      int maxParts)  throws IOException;
+
 
   /**
    * Get a valid Delegation Token.
