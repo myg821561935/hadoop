@@ -35,6 +35,9 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import static org.apache.hadoop.yarn.api.records.YarnApplicationState.FINISHED;
+import static org.mockito.Mockito.doReturn;
+
 public class TestAppReportFetcher {
 
   static ApplicationHistoryProtocol historyManager;
@@ -59,7 +62,25 @@ public class TestAppReportFetcher {
         .getApplicationReport(Mockito.any(GetApplicationReportRequest.class)))
         .thenThrow(new ApplicationNotFoundException(appNotFoundExceptionMsg));
     fetcher = new AppReportFetcherForTest(conf, appManager);
-    ApplicationId appId = ApplicationId.newInstance(0,0);
+    ApplicationId appId = ApplicationId.newInstance(0, 0);
+    fetcher.getApplicationReport(appId);
+  }
+
+  public void testHelperWithFinishedApplication(boolean isAHSEnabled)
+      throws YarnException, IOException {
+    conf.setBoolean(YarnConfiguration.APPLICATION_HISTORY_ENABLED,
+        isAHSEnabled);
+    appManager = Mockito.mock(ApplicationClientProtocol.class);
+    ApplicationReport appReport = Mockito.mock(ApplicationReport.class);
+    Mockito.when(appReport.getYarnApplicationState())
+        .thenReturn(FINISHED);
+    GetApplicationReportResponse reportResponse =
+        Mockito.mock(GetApplicationReportResponse.class);
+    doReturn(appReport).when(reportResponse).getApplicationReport();
+    doReturn(reportResponse).when(appManager).getApplicationReport(
+        Mockito.any(GetApplicationReportRequest.class));
+    fetcher = new AppReportFetcherForTest(conf, appManager);
+    ApplicationId appId = ApplicationId.newInstance(0, 0);
     fetcher.getApplicationReport(appId);
   }
 
@@ -88,6 +109,16 @@ public class TestAppReportFetcher {
     if (historyManager != null) {
       Assert.fail("HistoryManager should be null as AHS is disabled");
     }
+  }
+
+  @Test
+  public void testFetchReportAHSEnabledWithFinishedApplication()
+      throws YarnException, IOException {
+    testHelperWithFinishedApplication(true);
+    Mockito.verify(historyManager, Mockito.times(1))
+        .getApplicationReport(Mockito.any(GetApplicationReportRequest.class));
+    Mockito.verify(appManager, Mockito.times(1))
+        .getApplicationReport(Mockito.any(GetApplicationReportRequest.class));
   }
 
   static class AppReportFetcherForTest extends AppReportFetcher {

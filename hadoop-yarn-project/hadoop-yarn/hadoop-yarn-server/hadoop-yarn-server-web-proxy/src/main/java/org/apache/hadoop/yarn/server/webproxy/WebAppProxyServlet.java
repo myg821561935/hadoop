@@ -625,7 +625,6 @@ public class WebAppProxyServlet extends HttpServlet {
    * again... If this method returns true, there was a redirect, and
    * it was handled by redirecting the current request to an error page.
    *
-   * @param path the part of the request path after the app id
    * @param id the app id
    * @param req the request object
    * @param resp the response object

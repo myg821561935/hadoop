@@ -34,12 +34,20 @@ import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.factories.RecordFactory;
 import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import static org.apache.hadoop.yarn.api.records.YarnApplicationState.FAILED;
+import static org.apache.hadoop.yarn.api.records.YarnApplicationState.FINISHED;
+import static org.apache.hadoop.yarn.api.records.YarnApplicationState.KILLED;
 
 /**
  * This class abstracts away how ApplicationReports are fetched.
  */
 public class AppReportFetcher {
   enum AppReportSource { RM, AHS }
+  private static final Logger LOG = LoggerFactory.getLogger(
+      AppReportFetcher.class);
   private final Configuration conf;
   private final ApplicationClientProtocol applicationsManager;
   private final ApplicationHistoryProtocol historyManager;
@@ -133,6 +141,25 @@ public class AppReportFetcher {
       appReport = historyManager.
           getApplicationReport(request).getApplicationReport();
       fetchedAppReport = new FetchedAppReport(appReport, AppReportSource.AHS);
+    }
+
+    // if AHS is enabled and the application state is killed/finished/failed,
+    // get ApplicationReport from AHS prior to RM.
+    // So that WebAppProxyServlet would redirect track url to AHS instead of RM.
+    if (isAHSEnabled
+        && fetchedAppReport.getAppReportSource() == AppReportSource.RM
+        && (appReport.getYarnApplicationState() == KILLED
+           || appReport.getYarnApplicationState() == FINISHED
+           || appReport.getYarnApplicationState() == FAILED)) {
+      try {
+        ApplicationReport ahsAppReport = historyManager.
+            getApplicationReport(request).getApplicationReport();
+        fetchedAppReport = new FetchedAppReport(ahsAppReport,
+            AppReportSource.AHS);
+      } catch (ApplicationNotFoundException e) {
+        LOG.warn("Failed to get the application report from AHS, just skip" +
+            "it.");
+      }
     }
     return fetchedAppReport;
   }
