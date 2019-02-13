@@ -475,7 +475,7 @@ public class TimelineServiceV2Publisher extends AbstractSystemMetricsPublisher {
       entities.addEntity(entity);
       timelineCollector.putEntities(entities,
           UserGroupInformation.getCurrentUser());
-    } catch (IOException e) {
+    } catch (IOException | NullPointerException e) {
       LOG.error("Error when publishing entity " + entity);
       if (LOG.isDebugEnabled()) {
         LOG.debug("Error when publishing entity " + entity, e);
