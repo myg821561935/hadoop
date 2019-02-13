@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.RandomUtils;
@@ -676,98 +677,6 @@ public abstract class TestOzoneRpcClientAbstract {
     }
   }
 
-  @Test
-  public void testPutKeyAndGetKeyThreeNodes()
-      throws Exception {
-    String volumeName = UUID.randomUUID().toString();
-    String bucketName = UUID.randomUUID().toString();
-
-    String value = "sample value";
-    store.createVolume(volumeName);
-    OzoneVolume volume = store.getVolume(volumeName);
-    volume.createBucket(bucketName);
-    OzoneBucket bucket = volume.getBucket(bucketName);
-
-    String keyName = UUID.randomUUID().toString();
-
-    OzoneOutputStream out = bucket
-        .createKey(keyName, value.getBytes().length, ReplicationType.RATIS,
-            ReplicationFactor.THREE, new HashMap<>());
-    KeyOutputStream groupOutputStream =
-        (KeyOutputStream) out.getOutputStream();
-    XceiverClientManager manager = groupOutputStream.getXceiverClientManager();
-    out.write(value.getBytes());
-    out.close();
-    // First, confirm the key info from the client matches the info in OM.
-    OmKeyArgs.Builder builder = new OmKeyArgs.Builder();
-    builder.setVolumeName(volumeName).setBucketName(bucketName)
-        .setKeyName(keyName);
-    OmKeyLocationInfo keyInfo = ozoneManager.lookupKey(builder.build()).
-        getKeyLocationVersions().get(0).getBlocksLatestVersionOnly().get(0);
-    long containerID = keyInfo.getContainerID();
-    long localID = keyInfo.getLocalID();
-    OzoneKeyDetails keyDetails = bucket.getKey(keyName);
-    Assert.assertEquals(keyName, keyDetails.getName());
-
-    List<OzoneKeyLocation> keyLocations = keyDetails.getOzoneKeyLocations();
-    Assert.assertEquals(1, keyLocations.size());
-    Assert.assertEquals(containerID, keyLocations.get(0).getContainerID());
-    Assert.assertEquals(localID, keyLocations.get(0).getLocalID());
-
-    // Make sure that the data size matched.
-    Assert
-        .assertEquals(value.getBytes().length, keyLocations.get(0).getLength());
-
-    ContainerInfo container = cluster.getStorageContainerManager()
-        .getContainerManager().getContainer(ContainerID.valueof(containerID));
-    Pipeline pipeline = cluster.getStorageContainerManager()
-        .getPipelineManager().getPipeline(container.getPipelineID());
-    List<DatanodeDetails> datanodes = pipeline.getNodes();
-
-    DatanodeDetails datanodeDetails = datanodes.get(0);
-    Assert.assertNotNull(datanodeDetails);
-
-    XceiverClientSpi clientSpi = manager.acquireClient(pipeline);
-    Assert.assertTrue(clientSpi instanceof XceiverClientRatis);
-    XceiverClientRatis ratisClient = (XceiverClientRatis)clientSpi;
-
-    ratisClient.watchForCommit(keyInfo.getBlockCommitSequenceId(), 5000);
-    // shutdown the datanode
-    cluster.shutdownHddsDatanode(datanodeDetails);
-
-    Assert.assertTrue(container.getState()
-        == HddsProtos.LifeCycleState.OPEN);
-    // try to read, this shouls be successful
-    readKey(bucket, keyName, value);
-
-    Assert.assertTrue(container.getState()
-        == HddsProtos.LifeCycleState.OPEN);
-    // shutdown the second datanode
-    datanodeDetails = datanodes.get(1);
-    cluster.shutdownHddsDatanode(datanodeDetails);
-    Assert.assertTrue(container.getState()
-        == HddsProtos.LifeCycleState.OPEN);
-
-    // the container is open and with loss of 2 nodes we still should be able
-    // to read via Standalone protocol
-    // try to read
-    readKey(bucket, keyName, value);
-
-    // shutdown the 3rd datanode
-    datanodeDetails = datanodes.get(2);
-    cluster.shutdownHddsDatanode(datanodeDetails);
-    try {
-      // try to read
-      readKey(bucket, keyName, value);
-      fail("Expected exception not thrown");
-    } catch (IOException e) {
-      Assert.assertTrue(e.getMessage().contains("Failed to execute command"));
-      Assert.assertTrue(
-          e.getMessage().contains("on the pipeline " + pipeline.getId()));
-    }
-    manager.releaseClient(clientSpi, false);
-  }
-
   private void readKey(OzoneBucket bucket, String keyName, String data)
       throws IOException {
     OzoneKey key = bucket.getKey(keyName);
@@ -879,7 +788,7 @@ public abstract class TestOzoneRpcClientAbstract {
 
     // Write data into a key
     OzoneOutputStream out = bucket.createKey(keyName,
-        value.getBytes().length, ReplicationType.STAND_ALONE,
+        value.getBytes().length, ReplicationType.RATIS,
         ReplicationFactor.ONE, new HashMap<>());
     out.write(value.getBytes());
     out.close();
@@ -889,8 +798,6 @@ public abstract class TestOzoneRpcClientAbstract {
     OzoneKey key = bucket.getKey(keyName);
     long containerID = ((OzoneKeyDetails) key).getOzoneKeyLocations().get(0)
         .getContainerID();
-    long localID = ((OzoneKeyDetails) key).getOzoneKeyLocations().get(0)
-        .getLocalID();
 
     // Get the container by traversing the datanodes. Atleast one of the
     // datanode must have this container.
@@ -903,15 +810,114 @@ public abstract class TestOzoneRpcClientAbstract {
       }
     }
     Assert.assertNotNull("Container not found", container);
+    corruptData(container, key);
 
+    // Try reading the key. Since the chunk file is corrupted, it should
+    // throw a checksum mismatch exception.
+    try {
+      OzoneInputStream is = bucket.readKey(keyName);
+      is.read(new byte[100]);
+      fail("Reading corrupted data should fail.");
+    } catch (OzoneChecksumException e) {
+      GenericTestUtils.assertExceptionContains("Checksum mismatch", e);
+    }
+  }
+
+  /**
+   * Tests reading a corrputed chunk file throws checksum exception.
+   * @throws IOException
+   */
+  @Test
+  public void testReadKeyWithCorruptedDataWithMutiNodes() throws IOException {
+    String volumeName = UUID.randomUUID().toString();
+    String bucketName = UUID.randomUUID().toString();
+
+    String value = "sample value";
+    byte[] data = value.getBytes();
+    store.createVolume(volumeName);
+    OzoneVolume volume = store.getVolume(volumeName);
+    volume.createBucket(bucketName);
+    OzoneBucket bucket = volume.getBucket(bucketName);
+    String keyName = UUID.randomUUID().toString();
+
+    // Write data into a key
+    OzoneOutputStream out = bucket.createKey(keyName,
+        value.getBytes().length, ReplicationType.RATIS,
+        ReplicationFactor.THREE, new HashMap<>());
+    out.write(value.getBytes());
+    out.close();
+
+    // We need to find the location of the chunk file corresponding to the
+    // data we just wrote.
+    OzoneKey key = bucket.getKey(keyName);
+    List<OzoneKeyLocation> keyLocation =
+        ((OzoneKeyDetails) key).getOzoneKeyLocations();
+    Assert.assertTrue("Key location not found in OM", !keyLocation.isEmpty());
+    long containerID = ((OzoneKeyDetails) key).getOzoneKeyLocations().get(0)
+        .getContainerID();
+
+    // Get the container by traversing the datanodes.
+    List<Container> containerList = new ArrayList<>();
+    Container container;
+    for (HddsDatanodeService hddsDatanode : cluster.getHddsDatanodes()) {
+      container = hddsDatanode.getDatanodeStateMachine().getContainer()
+          .getContainerSet().getContainer(containerID);
+      if (container != null) {
+        containerList.add(container);
+        if (containerList.size() == 3) {
+          break;
+        }
+      }
+    }
+    Assert.assertTrue("Container not found", !containerList.isEmpty());
+    corruptData(containerList.get(0), key);
+    // Try reading the key. Read will fail on the first node and will eventually
+    // failover to next replica
+    try {
+      OzoneInputStream is = bucket.readKey(keyName);
+      byte[] b = new byte[data.length];
+      is.read(b);
+      Assert.assertTrue(Arrays.equals(b, data));
+    } catch (OzoneChecksumException e) {
+      fail("Reading corrupted data should not fail.");
+    }
+    corruptData(containerList.get(1), key);
+    // Try reading the key. Read will fail on the first node and will eventually
+    // failover to next replica
+    try {
+      OzoneInputStream is = bucket.readKey(keyName);
+      byte[] b = new byte[data.length];
+      is.read(b);
+      Assert.assertTrue(Arrays.equals(b, data));
+    } catch (OzoneChecksumException e) {
+      fail("Reading corrupted data should not fail.");
+    }
+    corruptData(containerList.get(2), key);
+    // Try reading the key. Read will fail here as all the replica are corrupt
+    try {
+      OzoneInputStream is = bucket.readKey(keyName);
+      byte[] b = new byte[data.length];
+      is.read(b);
+      fail("Reading corrupted data should fail.");
+    } catch (OzoneChecksumException e) {
+      GenericTestUtils.assertExceptionContains("Checksum mismatch", e);
+    }
+  }
+
+  private void corruptData(Container container, OzoneKey key)
+      throws IOException {
+    long containerID = ((OzoneKeyDetails) key).getOzoneKeyLocations().get(0)
+        .getContainerID();
+    long localID = ((OzoneKeyDetails) key).getOzoneKeyLocations().get(0)
+        .getLocalID();
     // From the containerData, get the block iterator for all the blocks in
     // the container.
     KeyValueContainerData containerData =
         (KeyValueContainerData) container.getContainerData();
-    String containerPath = new File(containerData.getMetadataPath())
-        .getParent();
-    KeyValueBlockIterator keyValueBlockIterator = new KeyValueBlockIterator(
-        containerID, new File(containerPath));
+    String containerPath =
+        new File(containerData.getMetadataPath()).getParent();
+    KeyValueBlockIterator keyValueBlockIterator =
+        new KeyValueBlockIterator(containerID, new File(containerPath));
 
     // Find the block corresponding to the key we put. We use the localID of
     // the BlockData to identify out key.
@@ -926,8 +932,8 @@ public abstract class TestOzoneRpcClientAbstract {
 
     // Get the location of the chunk file
     String chunkName = blockData.getChunks().get(0).getChunkName();
-    String containreBaseDir = container.getContainerData().getVolume()
-        .getHddsRootDir().getPath();
+    String containreBaseDir =
+        container.getContainerData().getVolume().getHddsRootDir().getPath();
     File chunksLocationPath = KeyValueContainerLocationUtil
         .getChunksLocationPath(containreBaseDir, SCM_ID, containerID);
     File chunkFile = new File(chunksLocationPath, chunkName);
@@ -935,16 +941,6 @@ public abstract class TestOzoneRpcClientAbstract {
     // Corrupt the contents of the chunk file
     String newData = new String("corrupted data");
     FileUtils.writeByteArrayToFile(chunkFile, newData.getBytes());
-
-    // Try reading the key. Since the chunk file is corrupted, it should
-    // throw a checksum mismatch exception.
-    try {
-      OzoneInputStream is = bucket.readKey(keyName);
-      is.read(new byte[100]);
-      fail("Reading corrupted data should fail.");
-    } catch (OzoneChecksumException e) {
-      GenericTestUtils.assertExceptionContains("Checksum mismatch", e);
-    }
   }
 
   @Test
