@@ -288,10 +288,25 @@ public final class OzoneConfigKeys {
   public static final int
       DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES_DEFAULT =
       ScmConfigKeys.DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES_DEFAULT;
-  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE =
-      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE;
-  public static final int DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE_DEFAULT =
-      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE_DEFAULT;
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_NUM_ELEMENTS =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_NUM_ELEMENTS;
+  public static final int DFS_CONTAINER_RATIS_LOG_QUEUE_NUM_ELEMENTS_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_NUM_ELEMENTS_DEFAULT;
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_BYTE_LIMIT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_BYTE_LIMIT;
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_BYTE_LIMIT_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_QUEUE_BYTE_LIMIT_DEFAULT;
+  public static final String
+      DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS;
+  public static final int
+      DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS_DEFAULT;
+  public static final String DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT;
+  public static final String
+      DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT_DEFAULT =
+      ScmConfigKeys.DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT_DEFAULT;
   public static final String DFS_RATIS_SERVER_REQUEST_TIMEOUT_DURATION_KEY =
       ScmConfigKeys.DFS_RATIS_SERVER_REQUEST_TIMEOUT_DURATION_KEY;
   public static final TimeDuration
@@ -314,9 +329,6 @@ public final class OzoneConfigKeys {
       DFS_RATIS_SERVER_FAILURE_DURATION_DEFAULT =
       ScmConfigKeys.DFS_RATIS_SERVER_FAILURE_DURATION_DEFAULT;
 
-  public static final String OZONE_SCM_WEB_AUTHENTICATION_KERBEROS_PRINCIPAL =
-      "ozone.web.authentication.kerberos.principal";
-
   public static final String HDDS_DATANODE_PLUGINS_KEY =
       "hdds.datanode.plugins";
 
@@ -330,6 +342,10 @@ public final class OzoneConfigKeys {
       "hdds.datanode.storage.utilization.critical.threshold";
   public static final double
       HDDS_DATANODE_STORAGE_UTILIZATION_CRITICAL_THRESHOLD_DEFAULT = 0.75;
+
+  public static final String OZONE_SECURITY_ENABLED_KEY =
+      "ozone.security.enabled";
+  public static final boolean OZONE_SECURITY_ENABLED_DEFAULT = false;
 
   public static final String OZONE_CONTAINER_COPY_WORKDIR =
       "hdds.datanode.replication.work.dir";
@@ -354,6 +370,13 @@ public final class OzoneConfigKeys {
       "ozone.acl.enabled";
   public static final boolean OZONE_ACL_ENABLED_DEFAULT =
       false;
+
+  //For technical reasons this is unused and hardcoded to the
+  // OzoneFileSystem.initialize.
+  public static final String OZONE_FS_ISOLATED_CLASSLOADER =
+      "ozone.fs.isolated-classloader";
+
+
 
   /**
    * There is no need to instantiate this class.

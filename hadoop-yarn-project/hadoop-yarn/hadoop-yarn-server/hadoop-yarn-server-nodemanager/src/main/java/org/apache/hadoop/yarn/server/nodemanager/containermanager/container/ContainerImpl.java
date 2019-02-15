@@ -36,6 +36,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.yarn.api.records.ContainerSubState;
+import org.apache.hadoop.yarn.api.records.LocalizationStatus;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.scheduler.UpdateContainerSchedulerEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,16 +62,13 @@ import org.apache.hadoop.yarn.security.ContainerTokenIdentifier;
 import org.apache.hadoop.yarn.server.api.protocolrecords.NMContainerStatus;
 import org.apache.hadoop.yarn.server.nodemanager.ContainerExecutor.ExitCode;
 import org.apache.hadoop.yarn.server.nodemanager.Context;
-import org.apache.hadoop.yarn.server.nodemanager.DeletionService;
 import org.apache.hadoop.yarn.server.nodemanager.NMAuditLogger;
 import org.apache.hadoop.yarn.server.nodemanager.NMAuditLogger.AuditConstants;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.AuxServicesEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.AuxServicesEventType;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.application.ApplicationContainerFinishedEvent;
-import org.apache.hadoop.yarn.server.nodemanager.containermanager.deletion.task.DockerContainerDeletionTask;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.launcher.ContainersLauncherEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.launcher.ContainersLauncherEventType;
-import org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.runtime.DockerLinuxContainerRuntime;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.LocalResourceRequest;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.ResourceSet;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.event.ContainerLocalizationCleanupEvent;
@@ -172,10 +170,12 @@ public class ContainerImpl implements Container {
   private SlidingWindowRetryPolicy.RetryContext windowRetryContext;
   private SlidingWindowRetryPolicy retryPolicy;
 
+  private String csiVolumesRootDir;
   private String workDir;
   private String logDir;
   private String host;
   private String ips;
+  private String exposedPorts;
   private volatile ReInitializationContext reInitContext;
   private volatile boolean isReInitializing = false;
   private volatile boolean isMarkeForKilling = false;
@@ -857,6 +857,7 @@ public class ContainerImpl implements Container {
           Arrays.asList(ips.split(",")));
       status.setHost(host);
       status.setContainerSubState(getContainerSubState());
+      status.setExposedPorts(exposedPorts);
       return status;
     } finally {
       this.readLock.unlock();
@@ -932,6 +933,16 @@ public class ContainerImpl implements Container {
   @Override
   public void setWorkDir(String workDir) {
     this.workDir = workDir;
+  }
+
+  @Override
+  public String getCsiVolumesRootDir() {
+    return csiVolumesRootDir;
+  }
+
+  @Override
+  public void setCsiVolumesRootDir(String volumesRootDir) {
+    this.csiVolumesRootDir = volumesRootDir;
   }
 
   private void clearIpAndHost() {
@@ -1456,7 +1467,8 @@ public class ContainerImpl implements Container {
       ContainerResourceFailedEvent failedEvent =
           (ContainerResourceFailedEvent) event;
       container.resourceSet
-          .resourceLocalizationFailed(failedEvent.getResource());
+          .resourceLocalizationFailed(failedEvent.getResource(),
+              failedEvent.getDiagnosticMessage());
       container.addDiagnostics(failedEvent.getDiagnosticMessage());
     }
   }
@@ -1472,7 +1484,7 @@ public class ContainerImpl implements Container {
       ContainerResourceFailedEvent failedEvent =
           (ContainerResourceFailedEvent) event;
       container.resourceSet.resourceLocalizationFailed(
-          failedEvent.getResource());
+          failedEvent.getResource(), failedEvent.getDiagnosticMessage());
       container.addDiagnostics("Container aborting re-initialization.. "
           + failedEvent.getDiagnosticMessage());
       LOG.error("Container [" + container.getContainerId() + "] Re-init" +
@@ -1554,12 +1566,6 @@ public class ContainerImpl implements Container {
     	
       // TODO: Add containerWorkDir to the deletion service.
 
-      if (DockerLinuxContainerRuntime.isDockerContainerRequested(
-          container.daemonConf,
-          container.getLaunchContext().getEnvironment())) {
-        removeDockerContainer(container);
-      }
-
       if (clCleanupRequired) {
         container.dispatcher.getEventHandler().handle(
             new ContainersLauncherEvent(container,
@@ -1594,12 +1600,6 @@ public class ContainerImpl implements Container {
 
       // TODO: Add containerWorkDir to the deletion service.
       // TODO: Add containerOuputDir to the deletion service.
-
-      if (DockerLinuxContainerRuntime.isDockerContainerRequested(
-          container.daemonConf,
-          container.getLaunchContext().getEnvironment())) {
-        removeDockerContainer(container);
-      }
 
       if (clCleanupRequired) {
         container.dispatcher.getEventHandler().handle(
@@ -1879,12 +1879,6 @@ public class ContainerImpl implements Container {
 
       if (exitEvent.getDiagnosticInfo() != null) {
         container.addDiagnostics(exitEvent.getDiagnosticInfo() + "\n");
-      }
-
-      if (DockerLinuxContainerRuntime.isDockerContainerRequested(
-          container.daemonConf,
-          container.getLaunchContext().getEnvironment())) {
-        removeDockerContainer(container);
       }
 
       // The process/process-grp is killed. Decrement reference counts and
@@ -2225,14 +2219,6 @@ public class ContainerImpl implements Container {
     return resourceMappings;
   }
 
-  private static void removeDockerContainer(ContainerImpl container) {
-    DeletionService deletionService = container.context.getDeletionService();
-    DockerContainerDeletionTask deletionTask =
-        new DockerContainerDeletionTask(deletionService, container.user,
-            container.getContainerId().toString());
-    deletionService.delete(deletionTask);
-  }
-
   private void storeRetryContext() {
     if (windowRetryContext.getRestartTimes() != null &&
         !windowRetryContext.getRestartTimes().isEmpty()) {
@@ -2269,5 +2255,20 @@ public class ContainerImpl implements Container {
         || state == ContainerState.CONTAINER_CLEANEDUP_AFTER_KILL
         || state == ContainerState.EXITED_WITH_FAILURE
         || state == ContainerState.EXITED_WITH_SUCCESS;
+  }
+
+  @Override
+  public void setExposedPorts(String ports) {
+    this.exposedPorts = ports;
+  }
+
+  @Override
+  public List<LocalizationStatus> getLocalizationStatuses() {
+    this.readLock.lock();
+    try {
+      return resourceSet.getLocalizationStatuses();
+    } finally {
+      this.readLock.unlock();
+    }
   }
 }

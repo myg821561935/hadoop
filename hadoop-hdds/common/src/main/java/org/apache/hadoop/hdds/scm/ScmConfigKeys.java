@@ -78,7 +78,7 @@ public final class ScmConfigKeys {
   public static final String DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_KEY =
       "dfs.container.ratis.segment.preallocated.size";
   public static final String
-      DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_DEFAULT = "128MB";
+      DFS_CONTAINER_RATIS_SEGMENT_PREALLOCATED_SIZE_DEFAULT = "16KB";
   public static final String
       DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_TIMEOUT =
       "dfs.container.ratis.statemachinedata.sync.timeout";
@@ -90,10 +90,23 @@ public final class ScmConfigKeys {
       "dfs.container.ratis.statemachinedata.sync.retries";
   public static final int
       DFS_CONTAINER_RATIS_STATEMACHINEDATA_SYNC_RETRIES_DEFAULT = -1;
-  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE =
-      "dfs.container.ratis.log.queue.size";
-  public static final int DFS_CONTAINER_RATIS_LOG_QUEUE_SIZE_DEFAULT = 128;
-
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_NUM_ELEMENTS =
+      "dfs.container.ratis.log.queue.num-elements";
+  public static final int DFS_CONTAINER_RATIS_LOG_QUEUE_NUM_ELEMENTS_DEFAULT =
+      1024;
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_BYTE_LIMIT =
+      "dfs.container.ratis.log.queue.byte-limit";
+  public static final String DFS_CONTAINER_RATIS_LOG_QUEUE_BYTE_LIMIT_DEFAULT =
+      "4GB";
+  public static final String
+      DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS =
+      "dfs.container.ratis.log.appender.queue.num-elements";
+  public static final int
+      DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS_DEFAULT = 1;
+  public static final String DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT =
+      "dfs.container.ratis.log.appender.queue.byte-limit";
+  public static final String
+      DFS_CONTAINER_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT_DEFAULT = "32MB";
   // expiry interval stateMachineData cache entry inside containerStateMachine
   public static final String
       DFS_CONTAINER_RATIS_STATEMACHINEDATA_CACHE_EXPIRY_INTERVAL =
@@ -159,6 +172,10 @@ public final class ScmConfigKeys {
       "ozone.scm.block.client.port";
   public static final int OZONE_SCM_BLOCK_CLIENT_PORT_DEFAULT = 9863;
 
+  public static final String OZONE_SCM_SECURITY_SERVICE_PORT_KEY =
+      "ozone.scm.security.service.port";
+  public static final int OZONE_SCM_SECURITY_SERVICE_PORT_DEFAULT = 9961;
+
   // Container service client
   public static final String OZONE_SCM_CLIENT_ADDRESS_KEY =
       "ozone.scm.client.address";
@@ -173,6 +190,14 @@ public final class ScmConfigKeys {
   public static final String OZONE_SCM_BLOCK_CLIENT_BIND_HOST_KEY =
       "ozone.scm.block.client.bind.host";
   public static final String OZONE_SCM_BLOCK_CLIENT_BIND_HOST_DEFAULT =
+      "0.0.0.0";
+
+  // SCM Security service address.
+  public static final String OZONE_SCM_SECURITY_SERVICE_ADDRESS_KEY =
+      "ozone.scm.security.service.address";
+  public static final String OZONE_SCM_SECURITY_SERVICE_BIND_HOST_KEY =
+      "ozone.scm.security.service.bind.host";
+  public static final String OZONE_SCM_SECURITY_SERVICE_BIND_HOST_DEFAULT =
       "0.0.0.0";
 
   public static final String OZONE_SCM_DATANODE_ADDRESS_KEY =
@@ -192,8 +217,9 @@ public final class ScmConfigKeys {
       "ozone.scm.http-address";
   public static final String OZONE_SCM_HTTPS_ADDRESS_KEY =
       "ozone.scm.https-address";
-  public static final String OZONE_SCM_KEYTAB_FILE =
-      "ozone.scm.keytab.file";
+  public static final String HDDS_SCM_KERBEROS_KEYTAB_FILE_KEY =
+      "hdds.scm.kerberos.keytab.file";
+  public static final String HDDS_SCM_KERBEROS_PRINCIPAL_KEY = "hdds.scm.kerberos.principal";
   public static final String OZONE_SCM_HTTP_BIND_HOST_DEFAULT = "0.0.0.0";
   public static final int OZONE_SCM_HTTP_BIND_PORT_DEFAULT = 9876;
   public static final int OZONE_SCM_HTTPS_BIND_PORT_DEFAULT = 9877;
@@ -215,6 +241,10 @@ public final class ScmConfigKeys {
   public static final String OZONE_SCM_HANDLER_COUNT_KEY =
       "ozone.scm.handler.count.key";
   public static final int OZONE_SCM_HANDLER_COUNT_DEFAULT = 10;
+
+  public static final String OZONE_SCM_SECURITY_HANDLER_COUNT_KEY =
+      "ozone.scm.security.handler.count.key";
+  public static final int OZONE_SCM_SECURITY_HANDLER_COUNT_DEFAULT = 2;
 
   public static final String OZONE_SCM_DEADNODE_INTERVAL =
       "ozone.scm.dead.node.interval";
@@ -282,9 +312,9 @@ public final class ScmConfigKeys {
   public static final String OZONE_SCM_CONTAINER_PLACEMENT_IMPL_KEY =
       "ozone.scm.container.placement.impl";
 
-  public static final String OZONE_SCM_CONTAINER_PROVISION_BATCH_SIZE =
-      "ozone.scm.container.provision_batch_size";
-  public static final int OZONE_SCM_CONTAINER_PROVISION_BATCH_SIZE_DEFAULT = 20;
+  public static final String OZONE_SCM_PIPELINE_OWNER_CONTAINER_COUNT =
+      "ozone.scm.pipeline.owner.container.count";
+  public static final int OZONE_SCM_PIPELINE_OWNER_CONTAINER_COUNT_DEFAULT = 3;
 
   public static final String
       OZONE_SCM_KEY_VALUE_CONTAINER_DELETION_CHOOSING_POLICY =
@@ -302,6 +332,11 @@ public final class ScmConfigKeys {
   public static final String OZONE_SCM_PIPELINE_DESTROY_TIMEOUT_DEFAULT =
       "300s";
 
+  public static final String OZONE_SCM_PIPELINE_CREATION_INTERVAL =
+      "ozone.scm.pipeline.creation.interval";
+  public static final String OZONE_SCM_PIPELINE_CREATION_INTERVAL_DEFAULT =
+      "120s";
+
   public static final String OZONE_SCM_BLOCK_DELETION_MAX_RETRY =
       "ozone.scm.block.deletion.max.retry";
   public static final int OZONE_SCM_BLOCK_DELETION_MAX_RETRY_DEFAULT = 4096;
@@ -312,6 +347,12 @@ public final class ScmConfigKeys {
   public static final String HDDS_SCM_WATCHER_TIMEOUT_DEFAULT =
       "10m";
 
+  public static final String
+      HDDS_SCM_HTTP_KERBEROS_PRINCIPAL_KEY =
+      "hdds.scm.http.kerberos.principal";
+  public static final String
+      HDDS_SCM_HTTP_KERBEROS_KEYTAB_FILE_KEY =
+      "hdds.scm.http.kerberos.keytab";
   /**
    * Never constructed.
    */

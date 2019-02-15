@@ -40,6 +40,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Set;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -99,8 +100,10 @@ public class SCMPipelineManager implements PipelineManager {
             (MetadataKeyFilters.MetadataKeyFilter[])null);
 
     for (Map.Entry<byte[], byte[]> entry : pipelines) {
-      Pipeline pipeline = Pipeline.getFromProtobuf(
-          HddsProtos.Pipeline.PARSER.parseFrom(entry.getValue()));
+      HddsProtos.Pipeline.Builder pipelineBuilder = HddsProtos.Pipeline
+          .newBuilder(HddsProtos.Pipeline.PARSER.parseFrom(entry.getValue()));
+      Pipeline pipeline = Pipeline.getFromProtobuf(pipelineBuilder.setState(
+          HddsProtos.PipelineState.PIPELINE_ALLOCATED).build());
       Preconditions.checkNotNull(pipeline);
       stateManager.addPipeline(pipeline);
       nodeManager.addPipeline(pipeline);
@@ -211,8 +214,8 @@ public class SCMPipelineManager implements PipelineManager {
   }
 
   @Override
-  public Set<ContainerID> getContainersInPipeline(PipelineID pipelineID)
-      throws IOException {
+  public NavigableSet<ContainerID> getContainersInPipeline(
+      PipelineID pipelineID) throws IOException {
     lock.readLock().lock();
     try {
       return stateManager.getContainers(pipelineID);

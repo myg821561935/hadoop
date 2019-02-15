@@ -41,6 +41,8 @@ import org.apache.hadoop.hdds.scm.server.SCMDatanodeHeartbeatDispatcher
     .NodeReportFromDatanode;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager
+    .DeleteContainerCommandCompleted;
+import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager
     .ReplicationCompleted;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationRequest;
 
@@ -167,6 +169,13 @@ public final class SCMEvents {
       new TypedEvent<>(DatanodeDetails.class, "Dead_Node");
 
   /**
+   * This event will be triggered whenever a datanode is moved from non-healthy
+   * state to healthy state.
+   */
+  public static final TypedEvent<DatanodeDetails> NON_HEALTHY_TO_HEALTHY_NODE =
+      new TypedEvent<>(DatanodeDetails.class, "NON_HEALTHY_TO_HEALTHY_NODE");
+
+  /**
    * This event will be triggered by CommandStatusReportHandler whenever a
    * status for Replication SCMCommand is received.
    */
@@ -204,6 +213,14 @@ public final class SCMEvents {
   public static final TypedEvent<ReplicationManager.ReplicationRequestToRepeat>
       TRACK_REPLICATE_COMMAND =
       new TypedEvent<>(ReplicationManager.ReplicationRequestToRepeat.class);
+
+  /**
+   * This event is sent by the ReplicaManager to the
+   * DeleteContainerCommandWatcher to track the in-progress delete commands.
+   */
+  public static final TypedEvent<ReplicationManager.DeletionRequestToRepeat>
+      TRACK_DELETE_CONTAINER_COMMAND =
+      new TypedEvent<>(ReplicationManager.DeletionRequestToRepeat.class);
   /**
    * This event comes from the Heartbeat dispatcher (in fact from the
    * datanode) to notify the scm that the replication is done. This is
@@ -215,6 +232,10 @@ public final class SCMEvents {
    */
   public static final TypedEvent<ReplicationCompleted> REPLICATION_COMPLETE =
       new TypedEvent<>(ReplicationCompleted.class);
+
+  public static final TypedEvent<DeleteContainerCommandCompleted>
+      DELETE_CONTAINER_COMMAND_COMPLETE =
+      new TypedEvent<>(DeleteContainerCommandCompleted.class);
 
   /**
    * Signal for all the components (but especially for the replication

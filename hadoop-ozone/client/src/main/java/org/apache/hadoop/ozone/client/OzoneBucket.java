@@ -31,16 +31,20 @@ import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
 import org.apache.hadoop.ozone.client.protocol.ClientProtocol;
 import org.apache.hadoop.ozone.OzoneAcl;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartInfo;
+import org.apache.hadoop.ozone.om.helpers.OmMultipartUploadCompleteInfo;
+import org.apache.hadoop.ozone.om.helpers.WithMetadata;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 
 /**
  * A class that encapsulates OzoneBucket.
  */
-public class OzoneBucket {
+public class OzoneBucket extends WithMetadata {
 
   /**
    * The proxy used for connecting to the cluster and perform
@@ -101,10 +105,12 @@ public class OzoneBucket {
    * @param versioning versioning status of the bucket.
    * @param creationTime creation time of the bucket.
    */
+  @SuppressWarnings("parameternumber")
   public OzoneBucket(Configuration conf, ClientProtocol proxy,
                      String volumeName, String bucketName,
                      List<OzoneAcl> acls, StorageType storageType,
-                     Boolean versioning, long creationTime) {
+                     Boolean versioning, long creationTime,
+                     Map<String, String> metadata) {
     Preconditions.checkNotNull(proxy, "Client proxy is not set.");
     this.proxy = proxy;
     this.volumeName = volumeName;
@@ -120,9 +126,11 @@ public class OzoneBucket {
     this.defaultReplicationType = ReplicationType.valueOf(conf.get(
         OzoneConfigKeys.OZONE_REPLICATION_TYPE,
         OzoneConfigKeys.OZONE_REPLICATION_TYPE_DEFAULT));
+    this.metadata = metadata;
   }
 
   @VisibleForTesting
+  @SuppressWarnings("parameternumber")
   OzoneBucket(String volumeName, String name,
       ReplicationFactor defaultReplication,
       ReplicationType defaultReplicationType,
@@ -244,7 +252,8 @@ public class OzoneBucket {
    */
   public OzoneOutputStream createKey(String key, long size)
       throws IOException {
-    return createKey(key, size, defaultReplicationType, defaultReplication);
+    return createKey(key, size, defaultReplicationType, defaultReplication,
+        new HashMap<>());
   }
 
   /**
@@ -258,9 +267,11 @@ public class OzoneBucket {
    */
   public OzoneOutputStream createKey(String key, long size,
                                      ReplicationType type,
-                                     ReplicationFactor factor)
+                                     ReplicationFactor factor,
+                                     Map<String, String> keyMetadata)
       throws IOException {
-    return proxy.createKey(volumeName, name, key, size, type, factor);
+    return proxy
+        .createKey(volumeName, name, key, size, type, factor, keyMetadata);
   }
 
   /**
@@ -353,12 +364,69 @@ public class OzoneBucket {
         defaultReplication);
   }
 
+  /**
+   * Create a part key for a multipart upload key.
+   * @param key
+   * @param size
+   * @param partNumber
+   * @param uploadID
+   * @return OzoneOutputStream
+   * @throws IOException
+   */
   public OzoneOutputStream createMultipartKey(String key, long size,
                                               int partNumber, String uploadID)
       throws IOException {
     return proxy.createMultipartKey(volumeName, name, key, size, partNumber,
         uploadID);
   }
+
+  /**
+   * Complete Multipart upload. This will combine all the parts and make the
+   * key visible in ozone.
+   * @param key
+   * @param uploadID
+   * @param partsMap
+   * @return OmMultipartUploadCompleteInfo
+   * @throws IOException
+   */
+  public OmMultipartUploadCompleteInfo completeMultipartUpload(String key,
+      String uploadID, Map<Integer, String> partsMap) throws IOException {
+    return proxy.completeMultipartUpload(volumeName, name, key, uploadID,
+        partsMap);
+  }
+
+  /**
+   * Abort multipart upload request.
+   * @param keyName
+   * @param uploadID
+   * @throws IOException
+   */
+  public void abortMultipartUpload(String keyName, String uploadID) throws
+      IOException {
+    proxy.abortMultipartUpload(volumeName, name, keyName, uploadID);
+  }
+
+  /**
+   * Returns list of parts of a multipart upload key.
+   * @param keyName
+   * @param uploadID
+   * @param partNumberMarker
+   * @param maxParts
+   * @return OzoneMultipartUploadPartListParts
+   */
+  public OzoneMultipartUploadPartListParts listParts(String keyName,
+      String uploadID, int partNumberMarker, int maxParts)  throws IOException {
+    // As at most we  can have 10000 parts for a key, not using iterator. If
+    // needed, it can be done later. So, if we send 10000 as max parts at
+    // most in a single rpc call, we return 0.6 mb, by assuming each part
+    // size as 60 bytes (ignored the replication type size during calculation)
+
+    return proxy.listParts(volumeName, name, keyName, uploadID,
+              partNumberMarker, maxParts);
+  }
+
+
+
 
   /**
    * An Iterator to iterate over {@link OzoneKey} list.

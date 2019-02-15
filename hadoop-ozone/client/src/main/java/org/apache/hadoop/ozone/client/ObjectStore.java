@@ -27,11 +27,16 @@ import java.util.Objects;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.scm.client.HddsClientUtils;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.ozone.client.protocol.ClientProtocol;
+import org.apache.hadoop.ozone.om.helpers.S3SecretValue;
+import org.apache.hadoop.ozone.security.OzoneTokenIdentifier;
 import org.apache.hadoop.security.UserGroupInformation;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
+import org.apache.hadoop.security.token.Token;
 
 /**
  * ObjectStore class is responsible for the client operations that can be
@@ -56,7 +61,7 @@ public class ObjectStore {
    * @param proxy ClientProtocol proxy.
    */
   public ObjectStore(Configuration conf, ClientProtocol proxy) {
-    this.proxy = proxy;
+    this.proxy = TracingUtil.createProxy(proxy, ClientProtocol.class);
     this.listCacheSize = HddsClientUtils.getListCacheSize(conf);
   }
 
@@ -153,6 +158,10 @@ public class ObjectStore {
   public OzoneVolume getVolume(String volumeName) throws IOException {
     OzoneVolume volume = proxy.getVolumeDetails(volumeName);
     return volume;
+  }
+
+  public S3SecretValue getS3Secret(String kerberosID) throws IOException {
+    return proxy.getS3Secret(kerberosID);
   }
 
   /**
@@ -372,5 +381,41 @@ public class ObjectStore {
       }
     }
   }
+
+  /**
+   * Get a valid Delegation Token.
+   *
+   * @param renewer the designated renewer for the token
+   * @return Token<OzoneDelegationTokenSelector>
+   * @throws IOException
+   */
+  public Token<OzoneTokenIdentifier> getDelegationToken(Text renewer)
+      throws IOException {
+    return proxy.getDelegationToken(renewer);
+  }
+
+  /**
+   * Renew an existing delegation token.
+   *
+   * @param token delegation token obtained earlier
+   * @return the new expiration time
+   * @throws IOException
+   */
+  public long renewDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    return proxy.renewDelegationToken(token);
+  }
+
+  /**
+   * Cancel an existing delegation token.
+   *
+   * @param token delegation token
+   * @throws IOException
+   */
+  public void cancelDelegationToken(Token<OzoneTokenIdentifier> token)
+      throws IOException {
+    proxy.cancelDelegationToken(token);
+  }
+
 
 }

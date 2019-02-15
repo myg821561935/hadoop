@@ -11,16 +11,12 @@
   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
   See the License for the specific language governing permissions and
   limitations under the License. See accompanying LICENSE file.
--->
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-http://maven.apache.org/xsd/maven-4.0.0.xsd">
+--><project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>org.apache.hadoop</groupId>
     <artifactId>hadoop-project</artifactId>
-    <version>3.2.1-SNAPSHOT</version>
+    <version>3.2.0</version>
     <relativePath/>
   </parent>
   <artifactId>hadoop-ozone</artifactId>
@@ -30,10 +26,10 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <packaging>pom</packaging>
 
   <properties>
-    <hadoop.version>3.2.1-SNAPSHOT</hadoop.version>
+    <hadoop.version>3.2.0</hadoop.version>
     <hdds.version>0.4.0-SNAPSHOT</hdds.version>
     <ozone.version>0.4.0-SNAPSHOT</ozone.version>
-    <ratis.version>0.4.0-b600fc2-SNAPSHOT</ratis.version>
+    <ratis.version>0.4.0-f283ffa-SNAPSHOT</ratis.version>
     <bouncycastle.version>1.60</bouncycastle.version>
     <ozone.release>Badlands</ozone.release>
     <declared.ozone.version>${ozone.version}</declared.ozone.version>
@@ -43,8 +39,10 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <module>common</module>
     <module>client</module>
     <module>ozone-manager</module>
-    <module>tools</module>
     <module>ozonefs</module>
+    <module>ozonefs-lib</module>
+    <module>ozonefs-lib-legacy</module>
+    <module>tools</module>
     <module>integration-test</module>
     <module>objectstore-service</module>
     <module>datanode</module>
@@ -100,6 +98,16 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-ozone-filesystem</artifactId>
+        <version>${ozone.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-filesystem-lib</artifactId>
+        <version>${ozone.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-ozone-filesystem-lib-legacy</artifactId>
         <version>${ozone.version}</version>
       </dependency>
       <dependency>
@@ -181,10 +189,6 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-hdfs-client</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-hdds-common</artifactId>
     </dependency>
     <dependency>
@@ -207,6 +211,7 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-hdds-tools</artifactId>
     </dependency>
+
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
@@ -278,9 +283,13 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
             <exclude>src/site/resources/images/*</exclude>
             <exclude>src/test/all-tests</exclude>
             <exclude>src/test/empty-file</exclude>
+            <exclude>src/test/resources/*.log</exclude>
             <exclude>src/test/resources/*.tgz</exclude>
             <exclude>src/test/resources/data*</exclude>
             <exclude>src/test/resources/empty-file</exclude>
+            <exclude>src/test/resources/ssl/*</exclude>
+            <exclude>src/main/compose/ozonesecure/docker-image/runner/build/apache-rat-0.12/README-CLI.txt</exclude>
+            <exclude>src/main/compose/ozonesecure/docker-image/runner/build/apache-rat-0.12/README-ANT.txt</exclude>
             <exclude>webapps/static/angular-1.6.4.min.js</exclude>
             <exclude>webapps/static/angular-nvd3-1.0.9.min.js</exclude>
             <exclude>webapps/static/angular-route-1.6.4.min.js</exclude>
@@ -292,6 +301,7 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
             <exclude>webapps/static/nvd3-1.8.5.min.css</exclude>
             <exclude>webapps/static/nvd3-1.8.5.min.js.map</exclude>
             <exclude>webapps/static/nvd3-1.8.5.min.js</exclude>
+            <exclude>**/dependency-reduced-pom.xml</exclude>
           </excludes>
         </configuration>
       </plugin>
@@ -299,7 +309,7 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>findbugs-maven-plugin</artifactId>
         <configuration>
-          <excludeFilterFile combine.self="override"></excludeFilterFile>
+          <excludeFilterFile combine.self="override"/>
         </configuration>
       </plugin>
       <plugin>

@@ -44,9 +44,13 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Test container closing.
+ */
 public class TestCloseContainerByPipeline {
 
   private static MiniOzoneCluster cluster;
@@ -64,9 +68,10 @@ public class TestCloseContainerByPipeline {
   @BeforeClass
   public static void init() throws Exception {
     conf = new OzoneConfiguration();
-    conf.set(ScmConfigKeys.OZONE_SCM_CONTAINER_PROVISION_BATCH_SIZE, "1");
+    conf.set(ScmConfigKeys.OZONE_SCM_PIPELINE_OWNER_CONTAINER_COUNT, "1");
     cluster = MiniOzoneCluster.newBuilder(conf)
-        .setNumDatanodes(9).build();
+        .setNumDatanodes(10)
+        .build();
     cluster.waitForClusterToBeReady();
     //the easiest way to create an open container is creating a key
     client = OzoneClientFactory.getClient(conf);
@@ -89,7 +94,7 @@ public class TestCloseContainerByPipeline {
   public void testIfCloseContainerCommandHandlerIsInvoked() throws Exception {
     OzoneOutputStream key = objectStore.getVolume("test").getBucket("test")
         .createKey("standalone", 1024, ReplicationType.RATIS,
-            ReplicationFactor.ONE);
+            ReplicationFactor.ONE, new HashMap<>());
     key.write("standalone".getBytes());
     key.close();
 
@@ -143,7 +148,7 @@ public class TestCloseContainerByPipeline {
 
     OzoneOutputStream key = objectStore.getVolume("test").getBucket("test")
         .createKey("standalone", 1024, ReplicationType.RATIS,
-            ReplicationFactor.ONE);
+            ReplicationFactor.ONE, new HashMap<>());
     key.write("standalone".getBytes());
     key.close();
 
@@ -192,7 +197,7 @@ public class TestCloseContainerByPipeline {
 
     OzoneOutputStream key = objectStore.getVolume("test").getBucket("test")
         .createKey("ratis", 1024, ReplicationType.RATIS,
-            ReplicationFactor.THREE);
+            ReplicationFactor.THREE, new HashMap<>());
     key.write("ratis".getBytes());
     key.close();
 
@@ -232,10 +237,12 @@ public class TestCloseContainerByPipeline {
     }
   }
 
-  private Boolean isContainerClosed(MiniOzoneCluster cluster, long containerID,
+  private Boolean isContainerClosed(MiniOzoneCluster ozoneCluster,
+      long containerID,
       DatanodeDetails datanode) {
     ContainerData containerData;
-    for (HddsDatanodeService datanodeService : cluster.getHddsDatanodes()) {
+    for (HddsDatanodeService datanodeService : ozoneCluster
+        .getHddsDatanodes()) {
       if (datanode.equals(datanodeService.getDatanodeDetails())) {
         containerData =
             datanodeService.getDatanodeStateMachine().getContainer()

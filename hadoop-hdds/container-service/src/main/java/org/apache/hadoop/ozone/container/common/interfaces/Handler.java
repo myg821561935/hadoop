@@ -45,6 +45,7 @@ import org.apache.hadoop.ozone.container.keyvalue.TarContainerPacker;
  * Dispatcher sends ContainerCommandRequests to Handler. Each Container Type
  * should have an implementation for Handler.
  */
+@SuppressWarnings("visibilitymodifier")
 public abstract class Handler {
 
   protected final Configuration conf;
@@ -144,6 +145,17 @@ public abstract class Handler {
    * @throws IOException
    */
   public abstract void closeContainer(Container container)
+      throws IOException;
+
+  /**
+   * Deletes the given container.
+   *
+   * @param container container to be deleted
+   * @param force if this is set to true, we delete container without checking
+   * state of the container.
+   * @throws IOException
+   */
+  public abstract void deleteContainer(Container container, boolean force)
       throws IOException;
 
   public void setScmID(String scmId) {

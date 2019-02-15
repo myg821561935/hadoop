@@ -20,6 +20,9 @@ package org.apache.hadoop.yarn.server.nodemanager.containermanager;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.ByteString;
+import org.apache.hadoop.yarn.api.protocolrecords.GetLocalizationStatusesRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.GetLocalizationStatusesResponse;
+import org.apache.hadoop.yarn.api.records.LocalizationStatus;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.UpdateContainerTokenEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.loghandler.event.LogHandlerTokenUpdatedEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.scheduler.ContainerSchedulerEvent;
@@ -258,6 +261,7 @@ public class ContainerManagerImpl extends CompositeService implements
     auxiliaryServices = new AuxServices(auxiliaryLocalPathHandler,
         this.context, this.deletionService);
     auxiliaryServices.registerServiceListener(this);
+    context.setAuxServices(auxiliaryServices);
     addService(auxiliaryServices);
 
     // initialize the metrics publisher if the timeline service v.2 is enabled
@@ -1339,8 +1343,8 @@ public class ContainerManagerImpl extends CompositeService implements
       if (isResourceChange) {
         increasedContainer =
             org.apache.hadoop.yarn.api.records.Container.newInstance(
-                containerId, null, null, targetResource, null, null,
-                currentExecType);
+                containerId, null, null, targetResource, null,
+                null, currentExecType);
         if (context.getIncreasedContainers().putIfAbsent(containerId,
             increasedContainer) != null){
           throw RPCUtil.getRemoteException("Container " + containerId.toString()
@@ -1509,6 +1513,8 @@ public class ContainerManagerImpl extends CompositeService implements
     sb.append(status.getIPs()).append(", ");
     sb.append("Host: ");
     sb.append(status.getHost()).append(", ");
+    sb.append("ExposedPorts: ");
+    sb.append(status.getExposedPorts()).append(", ");
     sb.append("ContainerSubState: ");
     sb.append(status.getContainerSubState());
     sb.append("]");
@@ -1960,4 +1966,54 @@ public class ContainerManagerImpl extends CompositeService implements
       dispatcher.getEventHandler().handle(new LogHandlerTokenUpdatedEvent());
     }
   }
+
+  @Override
+  public GetLocalizationStatusesResponse getLocalizationStatuses(
+      GetLocalizationStatusesRequest request) throws YarnException,
+      IOException {
+    Map<ContainerId, List<LocalizationStatus>> allStatuses = new HashMap<>();
+    Map<ContainerId, SerializedException> failedRequests = new HashMap<>();
+
+    UserGroupInformation remoteUgi = getRemoteUgi();
+    NMTokenIdentifier identifier = selectNMTokenIdentifier(remoteUgi);
+    if (identifier == null) {
+      throw RPCUtil.getRemoteException(INVALID_NMTOKEN_MSG);
+    }
+    String remoteUser = remoteUgi.getUserName();
+    for (ContainerId id : request.getContainerIds()) {
+      try {
+        List<LocalizationStatus> statuses = getLocalizationStatusesInternal(id,
+            identifier, remoteUser);
+        allStatuses.put(id, statuses);
+      } catch (YarnException e) {
+        failedRequests.put(id, SerializedException.newInstance(e));
+      }
+    }
+    return GetLocalizationStatusesResponse.newInstance(allStatuses,
+        failedRequests);
+  }
+
+  private List<LocalizationStatus> getLocalizationStatusesInternal(
+      ContainerId containerID,
+      NMTokenIdentifier nmTokenIdentifier, String remoteUser)
+      throws YarnException {
+    Container container = this.context.getContainers().get(containerID);
+
+    LOG.info("Getting localization status for {}", containerID);
+    authorizeGetAndStopContainerRequest(containerID, container, false,
+        nmTokenIdentifier, remoteUser);
+
+    String containerIDStr = containerID.toString();
+    if (container == null) {
+      if (nodeStatusUpdater.isContainerRecentlyStopped(containerID)) {
+        throw RPCUtil.getRemoteException("Container " + containerIDStr
+            + " was recently stopped on node manager.");
+      } else {
+        throw RPCUtil.getRemoteException("Container " + containerIDStr
+            + " is not handled by this NodeManager");
+      }
+    }
+    return container.getLocalizationStatuses();
+  }
+
 }

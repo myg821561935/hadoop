@@ -17,22 +17,22 @@
  */
 package org.apache.hadoop.yarn.csi.adaptor;
 
-import com.google.common.annotations.VisibleForTesting;
-import csi.v0.Csi;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.hadoop.yarn.api.CsiAdaptorProtocol;
+import org.apache.hadoop.yarn.api.CsiAdaptorPlugin;
 import org.apache.hadoop.yarn.api.protocolrecords.GetPluginInfoRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetPluginInfoResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.NodePublishVolumeRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.NodePublishVolumeResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.NodeUnpublishVolumeRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.NodeUnpublishVolumeResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.ValidateVolumeCapabilitiesRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.ValidateVolumeCapabilitiesResponse;
-import org.apache.hadoop.yarn.csi.client.CsiClient;
-import org.apache.hadoop.yarn.csi.client.CsiClientImpl;
-import org.apache.hadoop.yarn.csi.translator.ProtoTranslatorFactory;
-import org.apache.hadoop.yarn.csi.utils.ConfigUtils;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.ipc.YarnRPC;
+import org.apache.hadoop.yarn.util.csi.CsiConfigUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,25 +51,17 @@ public class CsiAdaptorProtocolService extends AbstractService
 
   private Server server;
   private InetSocketAddress adaptorServiceAddress;
-  private CsiClient csiClient;
-  private String csiDriverName;
+  private CsiAdaptorPlugin serverImpl;
 
-  public CsiAdaptorProtocolService(String driverName,
-      String domainSocketPath) {
+  public CsiAdaptorProtocolService(CsiAdaptorPlugin adaptorImpl) {
     super(CsiAdaptorProtocolService.class.getName());
-    this.csiClient = new CsiClientImpl(domainSocketPath);
-    this.csiDriverName = driverName;
-  }
-
-  @VisibleForTesting
-  public void setCsiClient(CsiClient client) {
-    this.csiClient = client;
+    this.serverImpl = adaptorImpl;
   }
 
   @Override
   protected void serviceInit(Configuration conf) throws Exception {
-    adaptorServiceAddress = ConfigUtils
-        .getCsiAdaptorAddressForDriver(csiDriverName, conf);
+    adaptorServiceAddress = CsiConfigUtils
+        .getCsiAdaptorAddressForDriver(serverImpl.getDriverName(), conf);
     super.serviceInit(conf);
   }
 
@@ -79,7 +71,7 @@ public class CsiAdaptorProtocolService extends AbstractService
     YarnRPC rpc = YarnRPC.create(conf);
     this.server = rpc.getServer(
         CsiAdaptorProtocol.class,
-        this, adaptorServiceAddress, conf, null, 1);
+        serverImpl, adaptorServiceAddress, conf, null, 1);
     this.server.start();
     LOG.info("{} started, listening on address: {}",
         CsiAdaptorProtocolService.class.getName(),
@@ -98,25 +90,25 @@ public class CsiAdaptorProtocolService extends AbstractService
   @Override
   public GetPluginInfoResponse getPluginInfo(
       GetPluginInfoRequest request) throws YarnException, IOException {
-    Csi.GetPluginInfoResponse response = csiClient.getPluginInfo();
-    return ProtoTranslatorFactory.getTranslator(
-        GetPluginInfoResponse.class, Csi.GetPluginInfoResponse.class)
-        .convertFrom(response);
+    return serverImpl.getPluginInfo(request);
   }
 
   @Override
   public ValidateVolumeCapabilitiesResponse validateVolumeCapacity(
       ValidateVolumeCapabilitiesRequest request) throws YarnException,
       IOException {
-    Csi.ValidateVolumeCapabilitiesRequest req = ProtoTranslatorFactory
-        .getTranslator(ValidateVolumeCapabilitiesRequest.class,
-            Csi.ValidateVolumeCapabilitiesRequest.class)
-        .convertTo(request);
-    Csi.ValidateVolumeCapabilitiesResponse response =
-        csiClient.validateVolumeCapabilities(req);
-    return ProtoTranslatorFactory.getTranslator(
-        ValidateVolumeCapabilitiesResponse.class,
-        Csi.ValidateVolumeCapabilitiesResponse.class)
-        .convertFrom(response);
+    return serverImpl.validateVolumeCapacity(request);
+  }
+
+  @Override
+  public NodePublishVolumeResponse nodePublishVolume(
+      NodePublishVolumeRequest request) throws YarnException, IOException {
+    return serverImpl.nodePublishVolume(request);
+  }
+
+  @Override
+  public NodeUnpublishVolumeResponse nodeUnpublishVolume(
+      NodeUnpublishVolumeRequest request) throws YarnException, IOException {
+    return serverImpl.nodeUnpublishVolume(request);
   }
 }

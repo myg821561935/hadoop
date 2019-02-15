@@ -23,28 +23,32 @@ import com.google.common.base.Strings;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.SocketAddress;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Objects;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.scm.HddsServerUtil;
 import org.apache.hadoop.ozone.om.OMConfigKeys;
+import org.apache.hadoop.ozone.om.OMNodeDetails;
+import org.apache.hadoop.ozone.om.protocol.OzoneManagerProtocol;
 import org.apache.ratis.RaftConfigKeys;
 import org.apache.ratis.client.RaftClientConfigKeys;
 import org.apache.ratis.conf.RaftProperties;
 import org.apache.ratis.grpc.GrpcConfigKeys;
 import org.apache.ratis.netty.NettyConfigKeys;
+import org.apache.ratis.protocol.RaftGroup;
 import org.apache.ratis.protocol.RaftGroupId;
+import org.apache.ratis.protocol.RaftPeer;
 import org.apache.ratis.protocol.RaftPeerId;
 import org.apache.ratis.rpc.RpcType;
 import org.apache.ratis.rpc.SupportedRpcType;
 import org.apache.ratis.server.RaftServer;
 import org.apache.ratis.server.RaftServerConfigKeys;
 import org.apache.ratis.statemachine.impl.BaseStateMachine;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import org.apache.ratis.util.LifeCycle;
 import org.apache.ratis.util.SizeInBytes;
 import org.apache.ratis.util.TimeDuration;
@@ -59,54 +63,105 @@ public final class OzoneManagerRatisServer {
       .getLogger(OzoneManagerRatisServer.class);
 
   private final int port;
+  private final InetSocketAddress omRatisAddress;
   private final RaftServer server;
+  private final RaftGroupId raftGroupId;
+  private final RaftGroup raftGroup;
+  private final RaftPeerId raftPeerId;
+  private final OzoneManagerProtocol ozoneManager;
 
-  private OzoneManagerRatisServer(String omId, int port, Configuration conf)
+  /**
+   * Returns an OM Ratis server.
+   * @param conf configuration
+   * @param om the OM instance starting the ratis server
+   * @param raftGroupIdStr raft group id string
+   * @param localRaftPeerId raft peer id of this Ratis server
+   * @param addr address of the ratis server
+   * @param raftPeers peer nodes in the raft ring
+   * @throws IOException
+   */
+  private OzoneManagerRatisServer(Configuration conf, OzoneManagerProtocol om,
+      String raftGroupIdStr, RaftPeerId localRaftPeerId,
+      InetSocketAddress addr, List<RaftPeer> raftPeers)
       throws IOException {
-    Objects.requireNonNull(omId, "omId == null");
-    this.port = port;
+    this.ozoneManager = om;
+    this.omRatisAddress = addr;
+    this.port = addr.getPort();
     RaftProperties serverProperties = newRaftProperties(conf);
 
+    this.raftPeerId = localRaftPeerId;
+    this.raftGroupId = RaftGroupId.valueOf(
+        ByteString.copyFromUtf8(raftGroupIdStr));
+    this.raftGroup = RaftGroup.valueOf(raftGroupId, raftPeers);
+
+    StringBuilder raftPeersStr = new StringBuilder();
+    for (RaftPeer peer : raftPeers) {
+      raftPeersStr.append(", ").append(peer.getAddress());
+    }
+    LOG.info("Instantiating OM Ratis server with GroupID: {} and " +
+        "Raft Peers: {}", raftGroupIdStr, raftPeersStr.toString().substring(2));
+
     this.server = RaftServer.newBuilder()
-        .setServerId(RaftPeerId.valueOf(omId))
+        .setServerId(this.raftPeerId)
+        .setGroup(this.raftGroup)
         .setProperties(serverProperties)
-        .setStateMachineRegistry(this::getStateMachine)
+        .setStateMachine(getStateMachine(this.raftGroupId))
         .build();
   }
 
-  public static OzoneManagerRatisServer newOMRatisServer(String omId,
-      Configuration ozoneConf) throws IOException {
-    int localPort = ozoneConf.getInt(
-        OMConfigKeys.OZONE_OM_RATIS_PORT_KEY,
-        OMConfigKeys.OZONE_OM_RATIS_PORT_DEFAULT);
+  /**
+   * Creates an instance of OzoneManagerRatisServer.
+   */
+  public static OzoneManagerRatisServer newOMRatisServer(
+      Configuration ozoneConf, OzoneManagerProtocol om,
+      OMNodeDetails omNodeDetails, List<OMNodeDetails> peerNodes)
+      throws IOException {
 
-    // Get an available port on current node and
-    // use that as the container port
-    if (ozoneConf.getBoolean(
-        OMConfigKeys.OZONE_OM_RATIS_RANDOM_PORT_KEY,
-        OMConfigKeys.OZONE_OM_RATIS_RANDOM_PORT_KEY_DEFAULT)) {
-      try (ServerSocket socket = new ServerSocket()) {
-        socket.setReuseAddress(true);
-        SocketAddress address = new InetSocketAddress(0);
-        socket.bind(address);
-        localPort = socket.getLocalPort();
-        LOG.info("Found a free port for the OM Ratis server : {}", localPort);
-      } catch (IOException e) {
-        LOG.error("Unable find a random free port for the server, "
-            + "fallback to use default port {}", localPort, e);
-      }
+    // RaftGroupId is the omServiceId
+    String omServiceId = omNodeDetails.getOMServiceId();
+
+    String omNodeId = omNodeDetails.getOMNodeId();
+    RaftPeerId localRaftPeerId = RaftPeerId.getRaftPeerId(omNodeId);
+
+    InetSocketAddress ratisAddr = new InetSocketAddress(
+        omNodeDetails.getAddress(), omNodeDetails.getRatisPort());
+
+    RaftPeer localRaftPeer = new RaftPeer(localRaftPeerId, ratisAddr);
+
+    List<RaftPeer> raftPeers = new ArrayList<>();
+    // Add this Ratis server to the Ratis ring
+    raftPeers.add(localRaftPeer);
+
+    for (OMNodeDetails peerInfo : peerNodes) {
+      String peerNodeId = peerInfo.getOMNodeId();
+      InetSocketAddress peerRatisAddr = new InetSocketAddress(
+          peerInfo.getAddress(), peerInfo.getRatisPort());
+      RaftPeerId raftPeerId = RaftPeerId.valueOf(peerNodeId);
+      RaftPeer raftPeer = new RaftPeer(raftPeerId, peerRatisAddr);
+
+      // Add other OM nodes belonging to the same OM service to the Ratis ring
+      raftPeers.add(raftPeer);
     }
-    return new OzoneManagerRatisServer(omId, localPort, ozoneConf);
+
+    return new OzoneManagerRatisServer(ozoneConf, om, omServiceId,
+        localRaftPeerId, ratisAddr, raftPeers);
+  }
+
+  public RaftGroup getRaftGroup() {
+    return this.raftGroup;
   }
 
   /**
-   * Return a dummy StateMachine.
-   * TODO: Implement a state machine on OM.
+   * Returns OzoneManager StateMachine.
    */
   private BaseStateMachine getStateMachine(RaftGroupId gid) {
-    return new BaseStateMachine();
+    return  new OzoneManagerStateMachine(ozoneManager);
   }
 
+  /**
+   * Start the Ratis server.
+   * @throws IOException
+   */
   public void start() throws IOException {
     LOG.info("Starting {} {} at port {}", getClass().getSimpleName(),
         server.getId(), port);
@@ -156,16 +211,24 @@ public final class OzoneManagerRatisServer {
         OMConfigKeys.OZONE_OM_RATIS_SEGMENT_PREALLOCATED_SIZE_KEY,
         OMConfigKeys.OZONE_OM_RATIS_SEGMENT_PREALLOCATED_SIZE_DEFAULT,
         StorageUnit.BYTES);
-    RaftServerConfigKeys.Log.Appender.setBufferCapacity(properties,
-        SizeInBytes.valueOf(raftSegmentPreallocatedSize));
+    int logAppenderQueueNumElements = conf.getInt(
+        OMConfigKeys.OZONE_OM_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS,
+        OMConfigKeys.OZONE_OM_RATIS_LOG_APPENDER_QUEUE_NUM_ELEMENTS_DEFAULT);
+    final int logAppenderQueueByteLimit = (int) conf.getStorageSize(
+        OMConfigKeys.OZONE_OM_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT,
+        OMConfigKeys.OZONE_OM_RATIS_LOG_APPENDER_QUEUE_BYTE_LIMIT_DEFAULT,
+        StorageUnit.BYTES);
+    RaftServerConfigKeys.Log.Appender.setBufferElementLimit(properties,
+        logAppenderQueueNumElements);
+    RaftServerConfigKeys.Log.Appender.setBufferByteLimit(properties,
+        SizeInBytes.valueOf(logAppenderQueueByteLimit));
     RaftServerConfigKeys.Log.setPreallocatedSize(properties,
         SizeInBytes.valueOf(raftSegmentPreallocatedSize));
 
     // For grpc set the maximum message size
-    // TODO: calculate the max message size based on the max size of a
-    // PutSmallFileRequest's file size limit
+    // TODO: calculate the optimal max message size
     GrpcConfigKeys.setMessageSizeMax(properties,
-        SizeInBytes.valueOf(raftSegmentPreallocatedSize));
+        SizeInBytes.valueOf(logAppenderQueueByteLimit));
 
     // Set the server request timeout
     TimeUnit serverRequestTimeoutUnit =
@@ -188,8 +251,8 @@ public final class OzoneManagerRatisServer {
             .getDuration(), retryCacheTimeoutUnit);
     final TimeDuration retryCacheTimeout = TimeDuration.valueOf(
         retryCacheTimeoutDuration, retryCacheTimeoutUnit);
-    RaftServerConfigKeys.RetryCache
-        .setExpiryTime(properties, retryCacheTimeout);
+    RaftServerConfigKeys.RetryCache.setExpiryTime(properties,
+        retryCacheTimeout);
 
     // Set the server min and max timeout
     TimeUnit serverMinTimeoutUnit =
@@ -209,18 +272,15 @@ public final class OzoneManagerRatisServer {
     RaftServerConfigKeys.Rpc.setTimeoutMax(properties,
         serverMaxTimeout);
 
-    // Enable batch append on raft server
-    RaftServerConfigKeys.Log.Appender.setBatchEnabled(properties, true);
-
     // Set the number of maximum cached segments
     RaftServerConfigKeys.Log.setMaxCachedSegmentNum(properties, 2);
 
     // Set the client request timeout
-    TimeUnit clientRequestTimeoutUnit =
-        OMConfigKeys.OZONE_OM_RATIS_CLIENT_REQUEST_TIMEOUT_DEFAULT.getUnit();
+    TimeUnit clientRequestTimeoutUnit = OMConfigKeys
+        .OZONE_OM_RATIS_CLIENT_REQUEST_TIMEOUT_DURATION_DEFAULT .getUnit();
     long clientRequestTimeoutDuration = conf.getTimeDuration(
-        OMConfigKeys.OZONE_OM_RATIS_CLIENT_REQUEST_TIMEOUT_KEY,
-        OMConfigKeys.OZONE_OM_RATIS_CLIENT_REQUEST_TIMEOUT_DEFAULT
+        OMConfigKeys.OZONE_OM_RATIS_CLIENT_REQUEST_TIMEOUT_DURATION_KEY,
+        OMConfigKeys.OZONE_OM_RATIS_CLIENT_REQUEST_TIMEOUT_DURATION_DEFAULT
             .getDuration(), clientRequestTimeoutUnit);
     final TimeDuration clientRequestTimeout = TimeDuration.valueOf(
         clientRequestTimeoutDuration, clientRequestTimeoutUnit);
@@ -229,18 +289,36 @@ public final class OzoneManagerRatisServer {
 
     // TODO: set max write buffer size
 
-    /**
-     * TODO: when state machine is implemented, enable StateMachineData sync
-     * and set sync timeout and number of sync retries.
-     */
+    // Set the ratis leader election timeout
+    TimeUnit leaderElectionMinTimeoutUnit =
+        OMConfigKeys.OZONE_OM_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_DEFAULT
+            .getUnit();
+    long leaderElectionMinTimeoutduration = conf.getTimeDuration(
+        OMConfigKeys.OZONE_OM_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_KEY,
+        OMConfigKeys.OZONE_OM_LEADER_ELECTION_MINIMUM_TIMEOUT_DURATION_DEFAULT
+            .getDuration(), leaderElectionMinTimeoutUnit);
+    final TimeDuration leaderElectionMinTimeout = TimeDuration.valueOf(
+        leaderElectionMinTimeoutduration, leaderElectionMinTimeoutUnit);
+    RaftServerConfigKeys.Rpc.setTimeoutMin(properties,
+        leaderElectionMinTimeout);
+    long leaderElectionMaxTimeout = leaderElectionMinTimeout.toLong(
+        TimeUnit.MILLISECONDS) + 200;
+    RaftServerConfigKeys.Rpc.setTimeoutMax(properties,
+        TimeDuration.valueOf(leaderElectionMaxTimeout, TimeUnit.MILLISECONDS));
 
-    /**
-     * TODO: set following ratis leader election related configs when
-     * replicated ratis server is implemented.
-     * 1. leader election timeout
-     * 2. node failure timeout
-     * 3.
-     */
+    TimeUnit nodeFailureTimeoutUnit =
+        OMConfigKeys.OZONE_OM_RATIS_SERVER_FAILURE_TIMEOUT_DURATION_DEFAULT
+            .getUnit();
+    long nodeFailureTimeoutDuration = conf.getTimeDuration(
+        OMConfigKeys.OZONE_OM_RATIS_SERVER_FAILURE_TIMEOUT_DURATION_KEY,
+        OMConfigKeys.OZONE_OM_RATIS_SERVER_FAILURE_TIMEOUT_DURATION_DEFAULT
+            .getDuration(), nodeFailureTimeoutUnit);
+    final TimeDuration nodeFailureTimeout = TimeDuration.valueOf(
+        nodeFailureTimeoutDuration, nodeFailureTimeoutUnit);
+    RaftServerConfigKeys.setLeaderElectionTimeout(properties,
+        nodeFailureTimeout);
+    RaftServerConfigKeys.Rpc.setSlownessTimeout(properties,
+        nodeFailureTimeout);
 
     /**
      * TODO: when ratis snapshots are implemented, set snapshot threshold and
@@ -259,6 +337,14 @@ public final class OzoneManagerRatisServer {
     return server.getLifeCycleState();
   }
 
+  @VisibleForTesting
+  public RaftPeerId getRaftPeerId() {
+    return this.raftPeerId;
+  }
+
+  /**
+   * Get the local directory where ratis logs will be stored.
+   */
   public static String getOMRatisDirectory(Configuration conf) {
     String storageDir = conf.get(OMConfigKeys.OZONE_OM_RATIS_STORAGE_DIR);
 
@@ -267,5 +353,4 @@ public final class OzoneManagerRatisServer {
     }
     return storageDir;
   }
-
 }

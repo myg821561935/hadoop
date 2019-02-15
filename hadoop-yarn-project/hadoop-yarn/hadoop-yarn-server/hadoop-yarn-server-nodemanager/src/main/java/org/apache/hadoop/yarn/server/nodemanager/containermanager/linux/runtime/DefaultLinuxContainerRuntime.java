@@ -209,6 +209,11 @@ public class DefaultLinuxContainerRuntime implements LinuxContainerRuntime {
   }
 
   @Override
+  public String getExposedPorts(Container container) {
+    return null;
+  }
+
+  @Override
   public IOStreamPair execContainer(ContainerExecContext ctx)
       throws ContainerExecutionException {
     IOStreamPair output;
@@ -267,7 +272,10 @@ public class DefaultLinuxContainerRuntime implements LinuxContainerRuntime {
         cmd.put("user", user);
         // launch-command = bash,-i
         List<String> commands = new ArrayList<String>();
-        commands.add("/bin/bash");
+        StringBuilder sb = new StringBuilder();
+        sb.append("/bin/");
+        sb.append(ctx.getShell());
+        commands.add(sb.toString());
         commands.add("-ir");
         cmd.put("launch-command", commands);
         // workdir = ../nm-local-dir/usercache/appcache/appid/containerid

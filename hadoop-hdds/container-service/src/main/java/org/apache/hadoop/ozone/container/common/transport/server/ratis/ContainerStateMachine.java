@@ -22,6 +22,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import org.apache.hadoop.hdds.HddsUtils;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
+
+import io.opentracing.Scope;
 import org.apache.ratis.proto.RaftProtos.RaftPeerRole;
 import org.apache.ratis.protocol.RaftGroup;
 import org.apache.ratis.protocol.RaftGroupId;
@@ -43,7 +46,10 @@ import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ReadChunkRequestProto;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ReadChunkResponseProto;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.container.common.interfaces.ContainerDispatcher;
+import org.apache.hadoop.hdds.security.token.TokenVerifier;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.ratis.protocol.Message;
 import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.server.storage.RaftStorage;
@@ -125,6 +131,8 @@ public class ContainerStateMachine extends BaseStateMachine {
   private final Map<Long, Long> applyTransactionCompletionMap;
   private long lastIndex;
   private final Cache<Long, ByteString> stateMachineDataCache;
+  private final boolean isBlockTokenEnabled;
+  private final TokenVerifier tokenVerifier;
   /**
    * CSM metrics.
    */
@@ -132,7 +140,8 @@ public class ContainerStateMachine extends BaseStateMachine {
 
   public ContainerStateMachine(RaftGroupId gid, ContainerDispatcher dispatcher,
       ThreadPoolExecutor chunkExecutor, XceiverServerRatis ratisServer,
-      List<ExecutorService> executors, long expiryInterval) {
+      List<ExecutorService> executors, long expiryInterval,
+      boolean isBlockTokenEnabled, TokenVerifier tokenVerifier) {
     this.gid = gid;
     this.dispatcher = dispatcher;
     this.chunkExecutor = chunkExecutor;
@@ -148,6 +157,8 @@ public class ContainerStateMachine extends BaseStateMachine {
         // set the limit on no of cached entries equal to no of max threads
         // executing writeStateMachineData
         .maximumSize(chunkExecutor.getCorePoolSize()).build();
+    this.isBlockTokenEnabled = isBlockTokenEnabled;
+    this.tokenVerifier = tokenVerifier;
   }
 
   @Override
@@ -217,58 +228,61 @@ public class ContainerStateMachine extends BaseStateMachine {
     final ContainerCommandRequestProto proto =
         getRequestProto(request.getMessage().getContent());
     Preconditions.checkArgument(request.getRaftGroupId().equals(gid));
-    try {
-      dispatcher.validateContainerCommand(proto);
-    } catch (IOException ioe) {
-      TransactionContext ctxt = TransactionContext.newBuilder()
-          .setClientRequest(request)
-          .setStateMachine(this)
-          .setServerRole(RaftPeerRole.LEADER)
-          .build();
-      ctxt.setException(ioe);
-      return ctxt;
-    }
-    if (proto.getCmdType() == Type.WriteChunk) {
-      final WriteChunkRequestProto write = proto.getWriteChunk();
-      // create the state machine data proto
-      final WriteChunkRequestProto dataWriteChunkProto =
-          WriteChunkRequestProto
-              .newBuilder(write)
-              .build();
-      ContainerCommandRequestProto dataContainerCommandProto =
-          ContainerCommandRequestProto
-              .newBuilder(proto)
-              .setWriteChunk(dataWriteChunkProto)
-              .build();
+    try (Scope scope = TracingUtil
+        .importAndCreateScope(proto.getCmdType().name(), proto.getTraceID())) {
+      try {
+        dispatcher.validateContainerCommand(proto);
+      } catch (IOException ioe) {
+        TransactionContext ctxt = TransactionContext.newBuilder()
+            .setClientRequest(request)
+            .setStateMachine(this)
+            .setServerRole(RaftPeerRole.LEADER)
+            .build();
+        ctxt.setException(ioe);
+        return ctxt;
+      }
+      if (proto.getCmdType() == Type.WriteChunk) {
+        final WriteChunkRequestProto write = proto.getWriteChunk();
+        // create the state machine data proto
+        final WriteChunkRequestProto dataWriteChunkProto =
+            WriteChunkRequestProto
+                .newBuilder(write)
+                .build();
+        ContainerCommandRequestProto dataContainerCommandProto =
+            ContainerCommandRequestProto
+                .newBuilder(proto)
+                .setWriteChunk(dataWriteChunkProto)
+                .build();
 
-      // create the log entry proto
-      final WriteChunkRequestProto commitWriteChunkProto =
-          WriteChunkRequestProto.newBuilder()
-              .setBlockID(write.getBlockID())
-              .setChunkData(write.getChunkData())
-              // skipping the data field as it is
-              // already set in statemachine data proto
-              .build();
-      ContainerCommandRequestProto commitContainerCommandProto =
-          ContainerCommandRequestProto
-              .newBuilder(proto)
-              .setWriteChunk(commitWriteChunkProto)
-              .build();
+        // create the log entry proto
+        final WriteChunkRequestProto commitWriteChunkProto =
+            WriteChunkRequestProto.newBuilder()
+                .setBlockID(write.getBlockID())
+                .setChunkData(write.getChunkData())
+                // skipping the data field as it is
+                // already set in statemachine data proto
+                .build();
+        ContainerCommandRequestProto commitContainerCommandProto =
+            ContainerCommandRequestProto
+                .newBuilder(proto)
+                .setWriteChunk(commitWriteChunkProto)
+                .build();
 
-      return TransactionContext.newBuilder()
-          .setClientRequest(request)
-          .setStateMachine(this)
-          .setServerRole(RaftPeerRole.LEADER)
-          .setStateMachineData(dataContainerCommandProto.toByteString())
-          .setLogData(commitContainerCommandProto.toByteString())
-          .build();
-    } else {
-      return TransactionContext.newBuilder()
-          .setClientRequest(request)
-          .setStateMachine(this)
-          .setServerRole(RaftPeerRole.LEADER)
-          .setLogData(request.getMessage().getContent())
-          .build();
+        return TransactionContext.newBuilder()
+            .setClientRequest(request)
+            .setStateMachine(this)
+            .setServerRole(RaftPeerRole.LEADER)
+            .setStateMachineData(dataContainerCommandProto.toByteString())
+            .setLogData(commitContainerCommandProto.toByteString())
+            .build();
+      } else {
+        return TransactionContext.newBuilder()
+            .setClientRequest(request)
+            .setStateMachine(this)
+            .setServerRole(RaftPeerRole.LEADER)
+            .setLogData(request.getMessage().getContent())
+            .build();
+      }
     }
   }
 
@@ -288,8 +302,13 @@ public class ContainerStateMachine extends BaseStateMachine {
 
   private ContainerCommandResponseProto dispatchCommand(
       ContainerCommandRequestProto requestProto,
-      DispatcherContext context) {
+      DispatcherContext context) throws IOException {
     LOG.trace("dispatch {}", requestProto);
+    if(isBlockTokenEnabled) {
+      // ServerInterceptors intercepts incoming request and creates ugi.
+      tokenVerifier.verify(UserGroupInformation.getCurrentUser()
+          .getShortUserName(), requestProto.getEncodedToken());
+    }
     ContainerCommandResponseProto response =
         dispatcher.dispatch(requestProto, context);
     LOG.trace("response {}", response);
@@ -297,7 +316,7 @@ public class ContainerStateMachine extends BaseStateMachine {
   }
 
   private Message runCommand(ContainerCommandRequestProto requestProto,
-      DispatcherContext context) {
+      DispatcherContext context) throws IOException {
     return dispatchCommand(requestProto, context)::toByteString;
   }
 
@@ -325,8 +344,15 @@ public class ContainerStateMachine extends BaseStateMachine {
             .setLogIndex(entryIndex)
             .setStage(DispatcherContext.WriteChunkStage.WRITE_DATA)
             .build();
-    CompletableFuture<Message> writeChunkFuture = CompletableFuture
-        .supplyAsync(() -> runCommand(requestProto, context), chunkExecutor);
+    CompletableFuture<Message> writeChunkFuture;
+    try {
+      Message msg = runCommand(requestProto, context);
+      writeChunkFuture = CompletableFuture
+          .supplyAsync(() -> msg, chunkExecutor);
+    }catch(IOException ie) {
+      writeChunkFuture = completeExceptionally(ie);
+    }
+
     writeChunkFutureMap.put(entryIndex, writeChunkFuture);
     LOG.debug("writeChunk writeStateMachineData : blockId " + write.getBlockID()
         + " logIndex " + entryIndex + " chunkName " + write.getChunkData()
@@ -385,14 +411,16 @@ public class ContainerStateMachine extends BaseStateMachine {
   }
 
   private ByteString readStateMachineData(
-      ContainerCommandRequestProto requestProto, long term, long index) {
+      ContainerCommandRequestProto requestProto, long term, long index)
+      throws IOException {
     WriteChunkRequestProto writeChunkRequestProto =
         requestProto.getWriteChunk();
+    ContainerProtos.ChunkInfo chunkInfo = writeChunkRequestProto.getChunkData();
     // prepare the chunk to be read
     ReadChunkRequestProto.Builder readChunkRequestProto =
         ReadChunkRequestProto.newBuilder()
             .setBlockID(writeChunkRequestProto.getBlockID())
-            .setChunkData(writeChunkRequestProto.getChunkData());
+            .setChunkData(chunkInfo);
     ContainerCommandRequestProto dataContainerCommandProto =
         ContainerCommandRequestProto.newBuilder(requestProto)
             .setCmdType(Type.ReadChunk)
@@ -411,7 +439,11 @@ public class ContainerStateMachine extends BaseStateMachine {
 
     ByteString data = responseProto.getData();
     // assert that the response has data in it.
-    Preconditions.checkNotNull(data);
+    Preconditions
+        .checkNotNull(data, "read chunk data is null for chunk:" + chunkInfo);
+    Preconditions.checkState(data.size() == chunkInfo.getLen(), String.format(
+        "read chunk len=%d does not match chunk expected len=%d for chunk:%s",
+        data.size(), chunkInfo.getLen(), chunkInfo));
     return data;
   }
 
@@ -553,9 +585,14 @@ public class ContainerStateMachine extends BaseStateMachine {
         builder
             .setStage(DispatcherContext.WriteChunkStage.COMMIT_DATA);
       }
-      future = CompletableFuture
-          .supplyAsync(() -> runCommand(requestProto, builder.build()),
-              getCommandExecutor(requestProto));
+      try {
+        Message msg = runCommand(requestProto, builder.build());
+        future = CompletableFuture.supplyAsync(() -> msg,
+            getCommandExecutor(requestProto));
+      } catch (IOException ie) {
+        future = completeExceptionally(ie);
+      }
+
       lastIndex = index;
       future.thenAccept(m -> {
         final Long previous =

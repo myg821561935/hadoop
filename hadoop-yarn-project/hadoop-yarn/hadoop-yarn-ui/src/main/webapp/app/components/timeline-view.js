@@ -377,6 +377,18 @@ export default Ember.Component.extend({
         }
       }
     }, {
+      id: 'exposedPorts',
+      headerTitle: 'Exposed Ports',
+      contentPath: 'exposedPorts',
+      getCellContent: function(row) {
+        var ports = row.get('exposedPorts');
+        if (ports) {
+          return ports;
+        } else {
+          return 'N/A';
+        }
+      }
+    }, {
       id: 'nodeHttpAddress',
       headerTitle: 'NodeManager Web UI',
       contentPath: 'nodeHttpAddress',
@@ -396,9 +408,9 @@ export default Ember.Component.extend({
       contentPath: 'logsLink',
       cellComponentName: 'em-table-html-cell',
       getCellContent: function(row) {
-        var logUrl = self.checkHttpProtocol(row.get('logsLink'));
-        if (logUrl) {
-          return `<a href="${logUrl}" target="_blank">Link</a>`;
+        var containerLogUrl = row.get('appAttemptContainerLogsURL');
+        if (containerLogUrl) {
+          return `<a href="${containerLogUrl}">Link</a>`;
         } else {
           return 'N/A';
         }
@@ -478,9 +490,21 @@ export default Ember.Component.extend({
       contentPath: 'logUrl',
       cellComponentName: 'em-table-html-cell',
       getCellContent: function(row) {
-        var url = self.checkHttpProtocol(row.get('logUrl'));
-        if (url) {
-          return `<a href="${url}" target="_blank">${url}</a>`;
+        var containerLogUrl = row.get('appAttemptContainerLogsURL');
+        if (containerLogUrl) {
+          return `<a href="${containerLogUrl}">Link</a>`;
+        } else {
+          return 'N/A';
+        }
+      }
+    }, {
+      id: 'exposedPorts',
+      headerTitle: 'Exposed Ports',
+      contentPath: 'exposedPorts',
+      getCellContent: function(row) {
+        var ports = row.get('exposedPorts');
+        if (ports) {
+          return ports;
         } else {
           return 'N/A';
         }

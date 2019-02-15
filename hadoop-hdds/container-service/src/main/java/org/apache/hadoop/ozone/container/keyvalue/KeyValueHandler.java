@@ -111,7 +111,9 @@ public class KeyValueHandler extends Handler {
   private final BlockDeletingService blockDeletingService;
   private final VolumeChoosingPolicy volumeChoosingPolicy;
   private final long maxContainerSize;
-  private final AutoCloseableLock handlerLock;
+
+  // A lock that is held during container creation.
+  private final AutoCloseableLock containerCreationLock;
   private final boolean doSyncWrite;
 
   public KeyValueHandler(Configuration config, StateContext context,
@@ -143,7 +145,7 @@ public class KeyValueHandler extends Handler {
             ScmConfigKeys.OZONE_SCM_CONTAINER_SIZE_DEFAULT, StorageUnit.BYTES);
     // this handler lock is used for synchronizing createContainer Requests,
     // so using a fair lock here.
-    handlerLock = new AutoCloseableLock(new ReentrantLock(true));
+    containerCreationLock = new AutoCloseableLock(new ReentrantLock(true));
   }
 
   @VisibleForTesting
@@ -212,7 +214,7 @@ public class KeyValueHandler extends Handler {
 
   /**
    * Handles Create Container Request. If successful, adds the container to
-   * ContainerSet.
+   * ContainerSet and sends an ICR to the SCM.
    */
   ContainerCommandResponseProto handleCreateContainer(
       ContainerCommandRequestProto request, KeyValueContainer kvContainer) {
@@ -235,13 +237,12 @@ public class KeyValueHandler extends Handler {
     KeyValueContainer newContainer = new KeyValueContainer(
         newContainerData, conf);
 
-    try {
-      handlerLock.acquire();
+    boolean created = false;
+    try (AutoCloseableLock l = containerCreationLock.acquire()) {
       if (containerSet.getContainer(containerID) == null) {
         newContainer.create(volumeSet, volumeChoosingPolicy, scmID);
-        containerSet.addContainer(newContainer);
+        created = containerSet.addContainer(newContainer);
       } else {
-
         // The create container request for an already existing container can
         // arrive in case the ContainerStateMachine reapplies the transaction
         // on datanode restart. Just log a warning msg here.
@@ -250,10 +251,15 @@ public class KeyValueHandler extends Handler {
       }
     } catch (StorageContainerException ex) {
       return ContainerUtils.logAndReturnError(LOG, ex, request);
-    } finally {
-      handlerLock.release();
     }
 
+    if (created) {
+      try {
+        sendICR(newContainer);
+      } catch (StorageContainerException ex) {
+        return ContainerUtils.logAndReturnError(LOG, ex, request);
+      }
+    }
     return ContainerUtils.getSuccessResponse(request);
   }
 
@@ -279,6 +285,14 @@ public class KeyValueHandler extends Handler {
       LOG.debug("Malformed Read Container request. trace ID: {}",
           request.getTraceID());
       return ContainerUtils.malformedRequest(request);
+    }
+
+    // The container can become unhealthy after the lock is released.
+    // The operation will likely fail/timeout in that happens.
+    try {
+      checkContainerIsHealthy(kvContainer);
+    } catch (StorageContainerException sce) {
+      return ContainerUtils.logAndReturnError(LOG, sce, request);
     }
 
     KeyValueContainerData containerData = kvContainer.getContainerData();
@@ -335,37 +349,10 @@ public class KeyValueHandler extends Handler {
     }
 
     boolean forceDelete = request.getDeleteContainer().getForceDelete();
-    kvContainer.writeLock();
     try {
-      // Check if container is open
-      if (kvContainer.getContainerData().isOpen()) {
-        kvContainer.writeUnlock();
-        throw new StorageContainerException(
-            "Deletion of Open Container is not allowed.",
-            DELETE_ON_OPEN_CONTAINER);
-      } else if (!forceDelete && kvContainer.getContainerData().getKeyCount()
-          > 0) {
-        // If the container is not empty and cannot be deleted forcibly,
-        // then throw a SCE to stop deleting.
-        kvContainer.writeUnlock();
-        throw new StorageContainerException(
-            "Container cannot be deleted because it is not empty.",
-            ContainerProtos.Result.ERROR_CONTAINER_NOT_EMPTY);
-      } else {
-        long containerId = kvContainer.getContainerData().getContainerID();
-        containerSet.removeContainer(containerId);
-        // Release the lock first.
-        // Avoid holding write locks for disk operations
-        kvContainer.writeUnlock();
-
-        kvContainer.delete(forceDelete);
-      }
+      deleteInternal(kvContainer, forceDelete);
     } catch (StorageContainerException ex) {
       return ContainerUtils.logAndReturnError(LOG, ex, request);
-    } finally {
-      if (kvContainer.hasWriteLock()) {
-        kvContainer.writeUnlock();
-      }
     }
     return ContainerUtils.getSuccessResponse(request);
   }
@@ -446,6 +433,14 @@ public class KeyValueHandler extends Handler {
       return ContainerUtils.malformedRequest(request);
     }
 
+    // The container can become unhealthy after the lock is released.
+    // The operation will likely fail/timeout in that happens.
+    try {
+      checkContainerIsHealthy(kvContainer);
+    } catch (StorageContainerException sce) {
+      return ContainerUtils.logAndReturnError(LOG, sce, request);
+    }
+
     BlockData responseData;
     try {
       BlockID blockID = BlockID.getFromProtobuf(
@@ -475,6 +470,14 @@ public class KeyValueHandler extends Handler {
       LOG.debug("Malformed Get Key request. trace ID: {}",
           request.getTraceID());
       return ContainerUtils.malformedRequest(request);
+    }
+
+    // The container can become unhealthy after the lock is released.
+    // The operation will likely fail/timeout in that happens.
+    try {
+      checkContainerIsHealthy(kvContainer);
+    } catch (StorageContainerException sce) {
+      return ContainerUtils.logAndReturnError(LOG, sce, request);
     }
 
     long blockLength;
@@ -536,6 +539,14 @@ public class KeyValueHandler extends Handler {
       return ContainerUtils.malformedRequest(request);
     }
 
+    // The container can become unhealthy after the lock is released.
+    // The operation will likely fail/timeout in that happens.
+    try {
+      checkContainerIsHealthy(kvContainer);
+    } catch (StorageContainerException sce) {
+      return ContainerUtils.logAndReturnError(LOG, sce, request);
+    }
+
     ChunkInfo chunkInfo;
     byte[] data;
     try {
@@ -564,6 +575,27 @@ public class KeyValueHandler extends Handler {
   }
 
   /**
+   * Throw an exception if the container is unhealthy.
+   *
+   * @throws StorageContainerException if the container is unhealthy.
+   * @param kvContainer
+   */
+  @VisibleForTesting
+  void checkContainerIsHealthy(KeyValueContainer kvContainer)
+      throws StorageContainerException {
+    kvContainer.readLock();
+    try {
+      if (kvContainer.getContainerData().getState() == State.UNHEALTHY) {
+        throw new StorageContainerException(
+            "The container replica is unhealthy.",
+            CONTAINER_UNHEALTHY);
+      }
+    } finally {
+      kvContainer.readUnlock();
+    }
+  }
+
+  /**
    * Handle Delete Chunk operation. Calls ChunkManager to process the request.
    */
   ContainerCommandResponseProto handleDeleteChunk(
@@ -573,6 +605,14 @@ public class KeyValueHandler extends Handler {
       LOG.debug("Malformed Delete Chunk request. trace ID: {}",
           request.getTraceID());
       return ContainerUtils.malformedRequest(request);
+    }
+
+    // The container can become unhealthy after the lock is released.
+    // The operation will likely fail/timeout in that happens.
+    try {
+      checkContainerIsHealthy(kvContainer);
+    } catch (StorageContainerException sce) {
+      return ContainerUtils.logAndReturnError(LOG, sce, request);
     }
 
     try {
@@ -723,6 +763,14 @@ public class KeyValueHandler extends Handler {
       return ContainerUtils.malformedRequest(request);
     }
 
+    // The container can become unhealthy after the lock is released.
+    // The operation will likely fail/timeout in that happens.
+    try {
+      checkContainerIsHealthy(kvContainer);
+    } catch (StorageContainerException sce) {
+      return ContainerUtils.logAndReturnError(LOG, sce, request);
+    }
+
     GetSmallFileRequestProto getSmallFileReq = request.getGetSmallFile();
 
     try {
@@ -823,6 +871,7 @@ public class KeyValueHandler extends Handler {
 
     populateContainerPathFields(container, maxSize);
     container.importContainerData(rawContainerStream, packer);
+    sendICR(container);
     return container;
 
   }
@@ -876,5 +925,33 @@ public class KeyValueHandler extends Handler {
     }
     container.close();
     sendICR(container);
+  }
+
+  @Override
+  public void deleteContainer(Container container, boolean force)
+      throws IOException {
+    deleteInternal(container, force);
+  }
+
+  private void deleteInternal(Container container, boolean force)
+      throws StorageContainerException {
+    container.writeLock();
+    try {
+    // If force is false, we check container state.
+      if (!force) {
+        // Check if container is open
+        if (container.getContainerData().isOpen()) {
+          throw new StorageContainerException(
+              "Deletion of Open Container is not allowed.",
+              DELETE_ON_OPEN_CONTAINER);
+        }
+      }
+      long containerId = container.getContainerData().getContainerID();
+      containerSet.removeContainer(containerId);
+    } finally {
+      container.writeUnlock();
+    }
+    // Avoid holding write locks for disk operations
+    container.delete();
   }
 }

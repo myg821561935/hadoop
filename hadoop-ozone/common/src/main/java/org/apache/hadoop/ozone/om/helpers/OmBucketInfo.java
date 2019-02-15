@@ -17,26 +17,28 @@
  */
 package org.apache.hadoop.ozone.om.helpers;
 
-import com.google.common.base.Preconditions;
-import org.apache.hadoop.hdds.protocol.StorageType;
-import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
-import org.apache.hadoop.ozone.OzoneAcl;
-import org.apache.hadoop.ozone.OzoneConsts;
-import org.apache.hadoop.ozone.audit.Auditable;
-import org.apache.hadoop.ozone.protocol.proto
-    .OzoneManagerProtocolProtos.BucketInfo;
-import org.apache.hadoop.ozone.protocolPB.OMPBHelper;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
+
+import org.apache.hadoop.hdds.protocol.StorageType;
+import org.apache.hadoop.ozone.OzoneAcl;
+import org.apache.hadoop.ozone.OzoneConsts;
+import org.apache.hadoop.ozone.audit.Auditable;
+import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.BucketInfo;
+import org.apache.hadoop.ozone.protocolPB.OMPBHelper;
+
+import com.google.common.base.Preconditions;
 
 /**
  * A class that encapsulates Bucket Info.
  */
-public final class OmBucketInfo implements Auditable {
+public final class OmBucketInfo extends WithMetadata implements Auditable {
   /**
    * Name of the volume in which the bucket belongs to.
    */
@@ -72,15 +74,20 @@ public final class OmBucketInfo implements Auditable {
    * @param storageType - Storage type to be used.
    * @param creationTime - Bucket creation time.
    */
-  private OmBucketInfo(String volumeName, String bucketName,
-                       List<OzoneAcl> acls, boolean isVersionEnabled,
-                       StorageType storageType, long creationTime) {
+  private OmBucketInfo(String volumeName,
+                       String bucketName,
+                       List<OzoneAcl> acls,
+                       boolean isVersionEnabled,
+                       StorageType storageType,
+                       long creationTime,
+                       Map<String, String> metadata) {
     this.volumeName = volumeName;
     this.bucketName = bucketName;
     this.acls = acls;
     this.isVersionEnabled = isVersionEnabled;
     this.storageType = storageType;
     this.creationTime = creationTime;
+    this.metadata = metadata;
   }
 
   /**
@@ -166,12 +173,14 @@ public final class OmBucketInfo implements Auditable {
     private Boolean isVersionEnabled;
     private StorageType storageType;
     private long creationTime;
+    private Map<String, String> metadata;
 
     public Builder() {
       //Default values
       this.acls = new LinkedList<>();
       this.isVersionEnabled = false;
       this.storageType = StorageType.DISK;
+      this.metadata = new HashMap<>();
     }
 
     public Builder setVolumeName(String volume) {
@@ -204,6 +213,18 @@ public final class OmBucketInfo implements Auditable {
       return this;
     }
 
+    public Builder addMetadata(String key, String value) {
+      metadata.put(key, value);
+      return this;
+    }
+
+    public Builder addAllMetadata(Map<String, String> additionalMetadata) {
+      if (additionalMetadata != null) {
+        metadata.putAll(additionalMetadata);
+      }
+      return this;
+    }
+
     /**
      * Constructs the OmBucketInfo.
      * @return instance of OmBucketInfo.
@@ -216,7 +237,8 @@ public final class OmBucketInfo implements Auditable {
       Preconditions.checkNotNull(storageType);
 
       return new OmBucketInfo(volumeName, bucketName, acls,
-          isVersionEnabled, storageType, creationTime);
+          isVersionEnabled, storageType, creationTime, metadata
+      );
     }
   }
 
@@ -232,6 +254,7 @@ public final class OmBucketInfo implements Auditable {
         .setIsVersionEnabled(isVersionEnabled)
         .setStorageType(storageType.toProto())
         .setCreationTime(creationTime)
+        .addAllMetadata(KeyValueUtil.toProtobuf(metadata))
         .build();
   }
 
@@ -248,6 +271,30 @@ public final class OmBucketInfo implements Auditable {
             OMPBHelper::convertOzoneAcl).collect(Collectors.toList()),
         bucketInfo.getIsVersionEnabled(),
         StorageType.valueOf(bucketInfo.getStorageType()),
-        bucketInfo.getCreationTime());
+        bucketInfo.getCreationTime(),
+        KeyValueUtil.getFromProtobuf(bucketInfo.getMetadataList()));
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    OmBucketInfo that = (OmBucketInfo) o;
+    return creationTime == that.creationTime &&
+        volumeName.equals(that.volumeName) &&
+        bucketName.equals(that.bucketName) &&
+        Objects.equals(acls, that.acls) &&
+        Objects.equals(isVersionEnabled, that.isVersionEnabled) &&
+        storageType == that.storageType &&
+        Objects.equals(metadata, that.metadata);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(volumeName, bucketName);
   }
 }

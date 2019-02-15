@@ -25,7 +25,6 @@ import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceInformation;
-import org.apache.hadoop.yarn.api.records.impl.LightWeightResource;
 import org.apache.hadoop.yarn.exceptions.ResourceNotFoundException;
 
 /**
@@ -38,25 +37,6 @@ public class Resources {
 
   private static final Log LOG =
       LogFactory.getLog(Resources.class);
-
-  /**
-   * Return a new {@link Resource} instance with all resource values
-   * initialized to {@code value}.
-   * @param value the value to use for all resources
-   * @return a new {@link Resource} instance
-   */
-  @Private
-  @Unstable
-  public static Resource createResourceWithSameValue(long value) {
-    LightWeightResource res = new LightWeightResource(value,
-            Long.valueOf(value).intValue());
-    int numberOfResources = ResourceUtils.getNumberOfKnownResourceTypes();
-    for (int i = 2; i < numberOfResources; i++) {
-      res.setResourceValue(i, value);
-    }
-
-    return res;
-  }
 
   /**
    * Helper class to create a resource with a fixed value for all resource
@@ -251,7 +231,7 @@ public class Resources {
   }
 
   public static Resource addTo(Resource lhs, Resource rhs) {
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation rhsValue = rhs.getResourceInformation(i);
@@ -270,7 +250,7 @@ public class Resources {
   }
 
   public static Resource subtractFrom(Resource lhs, Resource rhs) {
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation rhsValue = rhs.getResourceInformation(i);
@@ -325,7 +305,7 @@ public class Resources {
   }
 
   public static Resource multiplyTo(Resource lhs, double by) {
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation lhsValue = lhs.getResourceInformation(i);
@@ -348,7 +328,7 @@ public class Resources {
    */
   public static Resource multiplyAndAddTo(
       Resource lhs, Resource rhs, double by) {
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation rhsValue = rhs.getResourceInformation(i);
@@ -381,7 +361,7 @@ public class Resources {
   
   public static Resource multiplyAndRoundDown(Resource lhs, double by) {
     Resource out = clone(lhs);
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation lhsValue = lhs.getResourceInformation(i);
@@ -490,7 +470,7 @@ public class Resources {
   }
   
   public static boolean fitsIn(Resource smaller, Resource bigger) {
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation rhsValue = bigger.getResourceInformation(i);
@@ -513,7 +493,7 @@ public class Resources {
   
   public static Resource componentwiseMin(Resource lhs, Resource rhs) {
     Resource ret = createResource(0);
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation rhsValue = rhs.getResourceInformation(i);
@@ -532,7 +512,7 @@ public class Resources {
   
   public static Resource componentwiseMax(Resource lhs, Resource rhs) {
     Resource ret = createResource(0);
-    int maxLength = ResourceUtils.getNumberOfKnownResourceTypes();
+    int maxLength = ResourceUtils.getNumberOfCountableResourceTypes();
     for (int i = 0; i < maxLength; i++) {
       try {
         ResourceInformation rhsValue = rhs.getResourceInformation(i);

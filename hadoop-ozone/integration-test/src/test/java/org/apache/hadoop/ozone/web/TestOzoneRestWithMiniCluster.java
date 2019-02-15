@@ -47,6 +47,7 @@ import org.junit.rules.Timeout;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.HashMap;
 
 /**
  * End-to-end testing of Ozone REST operations.
@@ -103,10 +104,12 @@ public class TestOzoneRestWithMiniCluster {
     putKey(bucket, keyName, keyData);
   }
 
-  private void putKey(OzoneBucket bucket, String keyName, String keyData) throws IOException {
+  private void putKey(OzoneBucket bucket, String keyName, String keyData)
+      throws IOException {
     try (
         OzoneOutputStream ozoneOutputStream = bucket
-            .createKey(keyName, 0, replicationType, replicationFactor);
+            .createKey(keyName, 0, replicationType, replicationFactor,
+                new HashMap<>());
         InputStream inputStream = IOUtils.toInputStream(keyData, UTF_8)) {
       IOUtils.copy(inputStream, ozoneOutputStream);
     }

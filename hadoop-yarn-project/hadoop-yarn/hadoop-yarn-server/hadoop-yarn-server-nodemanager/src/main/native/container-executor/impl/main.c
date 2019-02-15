@@ -54,18 +54,24 @@ static void display_usage(FILE *stream) {
   if(is_docker_support_enabled()) {
     fprintf(stream,
       "       container-executor --run-docker <command-file>\n"
-      "       container-executor --exec-container <command-file>\n"
       "       container-executor --remove-docker-container [hierarchy] "
       "<container_id>\n"
       "       container-executor --inspect-docker-container <container_id>\n");
   } else {
     fprintf(stream,
       "[DISABLED] container-executor --run-docker <command-file>\n"
-      "[DISABLED] container-executor --exec-container <command-file>\n"
       "[DISABLED] container-executor --remove-docker-container [hierarchy] "
       "<container_id>\n"
       "[DISABLED] container-executor --inspect-docker-container "
       "<format> ... <container_id>\n");
+  }
+
+  if (is_terminal_support_enabled()) {
+    fprintf(stream,
+      "       container-executor --exec-container <command-file>\n");
+  } else {
+    fprintf(stream,
+      "[DISABLED] container-executor --exec-container <command-file>\n");
   }
 
   fprintf(stream,
@@ -116,6 +122,7 @@ static void display_usage(FILE *stream) {
         "[DISABLED]  sync yarn sysfs:       %2d app-id nm-local-dirs\n",
         SYNC_YARN_SYSFS);
   }
+  fflush(stream);
 }
 
 /* Sets up log files for normal/error logging */
@@ -224,6 +231,7 @@ static void assert_valid_setup(char *argv0) {
 
 static void display_feature_disabled_message(const char* name) {
     fprintf(ERRORFILE, "Feature disabled: %s\n", name);
+    fflush(ERRORFILE);
 }
 
 /* Use to store parsed input parmeters for various operations */
@@ -351,7 +359,7 @@ static int validate_arguments(int argc, char **argv , int *operation) {
   }
 
   if (strcmp("--exec-container", argv[1]) == 0) {
-    if(is_docker_support_enabled()) {
+    if(is_terminal_support_enabled()) {
       if (argc != 3) {
         display_usage(stdout);
         return INVALID_ARGUMENT_NUMBER;
@@ -361,7 +369,7 @@ static int validate_arguments(int argc, char **argv , int *operation) {
       *operation = EXEC_CONTAINER;
       return 0;
     } else {
-        display_feature_disabled_message("docker");
+        display_feature_disabled_message("feature.terminal.enabled");
         return FEATURE_DISABLED;
     }
   }
@@ -452,6 +460,7 @@ static int validate_run_as_user_commands(int argc, char **argv, int *operation) 
     cmd_input.container_id = argv[optind++];
     if (!validate_container_id(cmd_input.container_id)) {
       fprintf(ERRORFILE, "Invalid container id %s\n", cmd_input.container_id);
+      fflush(ERRORFILE);
       return INVALID_CONTAINER_ID;
     }
     cmd_input.cred_file = argv[optind++];
